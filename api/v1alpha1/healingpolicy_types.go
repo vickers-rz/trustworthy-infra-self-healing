@@ -5,16 +5,18 @@ import metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 const (
 	ObservationModeObserve = "Observe"
 
-	ConditionTargetResolved = "TargetResolved"
+	ConditionTargetResolved  = "TargetResolved"
 	ConditionObservedHealthy = "ObservedHealthy"
-	ConditionObserveOnly     = "ObserveOnly"
+	ConditionObserveOnly      = "ObserveOnly"
 )
 
 // TargetReference identifies the workload observed by a HealingPolicy.
 // The MVP intentionally supports only apps/v1 Deployments.
 type TargetReference struct {
 	Namespace string `json:"namespace,omitempty"`
-	Name      string `json:"name"`
+
+	// +kubebuilder:validation:MinLength=1
+	Name string `json:"name"`
 }
 
 // HealingPolicySpec declares what should be observed. It does not grant
@@ -23,9 +25,14 @@ type HealingPolicySpec struct {
 	Target TargetReference `json:"target"`
 
 	// Mode is deliberately restricted to Observe in the first controller.
+	// +kubebuilder:default:=Observe
+	// +kubebuilder:validation:Enum=Observe
 	Mode string `json:"mode,omitempty"`
 
 	// ObserveIntervalSeconds controls the periodic read-only reconciliation.
+	// +kubebuilder:default:=30
+	// +kubebuilder:validation:Minimum=5
+	// +kubebuilder:validation:Maximum=3600
 	ObserveIntervalSeconds int32 `json:"observeIntervalSeconds,omitempty"`
 }
 
@@ -40,7 +47,7 @@ type HealingPolicyStatus struct {
 	ReadyReplicas     int32 `json:"readyReplicas,omitempty"`
 	UpdatedReplicas   int32 `json:"updatedReplicas,omitempty"`
 
-	LastObservedTime *metav1.Time      `json:"lastObservedTime,omitempty"`
+	LastObservedTime *metav1.Time       `json:"lastObservedTime,omitempty"`
 	Conditions       []metav1.Condition `json:"conditions,omitempty"`
 }
 

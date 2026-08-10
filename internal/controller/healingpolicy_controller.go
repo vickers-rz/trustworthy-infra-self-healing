@@ -25,6 +25,10 @@ const defaultObserveInterval = 30 * time.Second
 // HealingPolicyReconciler is deliberately observation-only. It may read
 // Deployments and update HealingPolicy status, but it has no mutation path to
 // the target workload.
+//
+// +kubebuilder:rbac:groups=infraheal.io,resources=healingpolicies,verbs=get;list;watch
+// +kubebuilder:rbac:groups=infraheal.io,resources=healingpolicies/status,verbs=get;update;patch
+// +kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch
 type HealingPolicyReconciler struct {
 	client.Client
 	Scheme *runtime.Scheme
