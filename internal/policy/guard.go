@@ -63,6 +63,12 @@ func (g *Guard) Evaluate(p domain.Proposal, ctx domain.ExecutionContext) Decisio
 	}
 	if len(p.Evidence) == 0 {
 		deny("no evidence provenance supplied")
+	} else {
+		for i := range p.Evidence {
+			if err := p.Evidence[i].Validate(); err != nil {
+				deny(fmt.Sprintf("evidence[%d] provenance is invalid: %v", i, err))
+			}
+		}
 	}
 	if len(p.Preconditions) == 0 {
 		deny("mutable action requires explicit preconditions")

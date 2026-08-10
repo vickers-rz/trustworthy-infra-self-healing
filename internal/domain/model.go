@@ -41,12 +41,6 @@ const (
 	ActionFailoverDatabase   ActionType = "failover_database"
 )
 
-type EvidenceRef struct {
-	URI     string  `json:"uri"`
-	Summary string  `json:"summary"`
-	Weight  float64 `json:"weight,omitempty"`
-}
-
 type Hypothesis struct {
 	Type       string  `json:"type"`
 	Confidence float64 `json:"confidence"`

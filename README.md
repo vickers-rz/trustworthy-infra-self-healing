@@ -8,7 +8,7 @@ The project explores a simple but demanding question:
 
 > How can probabilistic AI safely assist deterministic production infrastructure without becoming an unrestricted production operator?
 
-The answer is not “give an LLM shell access.” This repository separates **observation, diagnosis, proposal, trusted execution context, risk classification, authorization, execution, verification, rollback, and learning** into explicit layers with independent safety boundaries.
+The answer is not “give an LLM shell access.” This repository separates **observation, evidence, diagnosis, proposal, trusted execution context, risk classification, authorization, execution, verification, rollback, and learning** into explicit layers with independent safety boundaries.
 
 ## Design thesis
 
@@ -56,18 +56,35 @@ The current design intentionally splits model/planner output from trusted runtim
 
 **The proposal cannot approve itself, grant itself authority, disable an operator override, or choose the risk used for authorization.**
 
+## Evidence contract
+
+Evidence is data with provenance, not free-form context pasted into a prompt.
+
+Each evidence reference carries an ID, kind, source URI, source system, collector identity, subject, observation/collection timestamps, optional observation window, optional freshness deadline, source trust metadata, and an optional SHA-256 integrity digest.
+
+Important distinctions:
+
+- `summary` is **untrusted evidence content**, never an instruction;
+- `trust` describes the source/provenance class, not how strongly a model should believe a hypothesis;
+- evidence weighting/ranking belongs to diagnosis logic, not to the evidence object itself;
+- `fresh`, `stale`, and `freshness unknown` are distinct states;
+- supporting and contradicting relations are explicit rather than hidden inside generated prose;
+- missing telemetry may be represented explicitly instead of silently disappearing from context.
+
+A deterministic validator rejects malformed provenance before a mutable proposal can pass the remediation guard.
+
 ## Core principles
 
 1. **Observe freely.** Read-only telemetry and evidence collection are broadly available.
-2. **Reason probabilistically.** ML/LLM components may express uncertainty, hypotheses, confidence, alternatives, and advisory risk estimates.
-3. **Propose structurally.** AI outputs typed remediation proposals, never arbitrary shell commands.
-4. **Classify risk deterministically.** Effective operational risk is derived from trusted semantic action rules, not accepted from model output.
-5. **Authorize from trusted context.** Identity, authority, human approval, operator override, environment, and policy version are supplied outside the proposal.
-6. **Execute minimally.** Prefer the smallest reversible intervention that can validate the hypothesis.
-7. **Verify independently.** Success is determined by measurable postconditions/SLO signals, not by the model that proposed the action.
-8. **Rollback exactly.** A typed safe escape path is required before execution for action classes that demand it.
-9. **Learn with provenance.** Every conclusion and action retains evidence, model, policy, approval, execution, and outcome lineage.
-10. **Fail closed on ambiguity.** Missing context, malformed typed actions, risk under-reporting, or unknown actions reduce authority rather than expand it.
+2. **Preserve provenance.** Evidence must retain source, collector, time, subject, freshness semantics, and integrity metadata when available.
+3. **Reason probabilistically.** ML/LLM components may express uncertainty, hypotheses, confidence, alternatives, and advisory risk estimates.
+4. **Propose structurally.** AI outputs typed remediation proposals, never arbitrary shell commands.
+5. **Classify risk deterministically.** Effective operational risk is derived from trusted semantic action rules, not accepted from model output.
+6. **Authorize from trusted context.** Identity, authority, human approval, operator override, environment, and policy version are supplied outside the proposal.
+7. **Execute minimally.** Prefer the smallest reversible intervention that can validate the hypothesis.
+8. **Verify independently.** Success is determined by measurable postconditions/SLO signals, not by the model that proposed the action.
+9. **Rollback exactly.** A typed safe escape path is required before execution for action classes that demand it.
+10. **Fail closed on ambiguity.** Missing context, malformed evidence/actions, risk under-reporting, or unknown actions reduce authority rather than expand it.
 
 ## Non-goals
 
@@ -78,6 +95,7 @@ This project is **not** intended to be:
 - a system where model confidence overrides policy;
 - a system that trusts an AI-provided `human_approved: true` flag;
 - a system that accepts model-declared risk as authorization truth;
+- a system that treats retrieved text as trusted instructions;
 - a mechanism for silently expanding its own production permissions;
 - an opaque “AI fixed it” black box.
 
@@ -88,6 +106,7 @@ Logs / Metrics / Traces / Events / Git / Runbooks / Incidents
                            │
                            ▼
                     Evidence Layer
+               provenance / freshness / relations
                            │
                            ▼
               Diagnosis / Retrieval / ML / LLM
@@ -101,6 +120,7 @@ Logs / Metrics / Traces / Events / Git / Runbooks / Incidents
               ┌─────────────────────────┐
               │   Remediation Guard     │◄──── trusted ExecutionContext
               │                         │
+              │ evidence validation     │
               │ schema validation       │
               │ authority               │
               │ effective risk          │
@@ -174,10 +194,28 @@ proposal:
     type: unhealthy_new_deployment
     confidence: 0.87
   evidence:
-    - uri: deploy://payment-api/revision/193
+    - id: ev_deploy_193
+      kind: change
+      uri: k8s://payments/deployment/payment-api/revision/193
+      source: kubernetes-apiserver
+      collector: infraheal-k8s-observer/v0
+      subject: k8s://payments/deployment/payment-api
       summary: deployment changed before the error-rate increase
-    - uri: metric://prometheus/payment-api/error-rate
+      observed_at: 2026-08-10T04:00:00Z
+      collected_at: 2026-08-10T04:00:01Z
+      fresh_until: 2026-08-10T04:15:00Z
+      trust: high
+    - id: ev_error_rate
+      kind: metric
+      uri: prometheus://payment-api/error-rate?window=5m
+      source: prometheus
+      collector: infraheal-prometheus-adapter/v0
+      subject: k8s://payments/deployment/payment-api
       summary: 5xx rose immediately after revision 193 rollout
+      observed_at: 2026-08-10T04:12:00Z
+      collected_at: 2026-08-10T04:12:02Z
+      fresh_until: 2026-08-10T04:14:00Z
+      trust: high
   action:
     type: rollback_deployment
     rollback_deployment:
@@ -237,33 +275,39 @@ Each action has its own typed payload and validation rules. Rollback/compensatio
 
 ```text
 cmd/controlplane/        Go control-plane entry point
-internal/domain/         typed proposal/action/trusted-context models
+cmd/controller/          observe-only Kubernetes controller
+api/v1alpha1/            HealingPolicy Kubernetes API
+internal/domain/         proposal/action/context/evidence domain models
 internal/risk/           deterministic effective-risk classifier
 internal/policy/         remediation guard
 internal/executor/       semantic executor boundary
+internal/controller/     observe-only reconciliation logic
 docs/MANIFESTO.md        design principles
 docs/ARCHITECTURE.md     architecture and control flow
 docs/THREAT_MODEL.md     failure and abuse model
 docs/REMEDIATION_POLICY.md policy semantics
 docs/LEARNING_ROADMAP.md research + learning plan
-config/                  example policies
+config/                  CRD, generated RBAC, manager and examples
+test/e2e/                restricted-RBAC Kind safety test
 examples/                sample proposals and trusted contexts
 ```
 
-## Initial milestone
+## Current milestones
 
-The first milestone intentionally avoids live production mutation. It focuses on the part that must be correct before autonomy:
+Completed foundations include:
 
 - closed typed remediation action schema;
 - trusted execution context separated from planner output;
 - deterministic effective-risk classification;
-- authority and risk policy;
 - fail-closed behavior for malformed or under-reported input;
+- provenance-bearing evidence model and validator;
 - mandatory typed rollback where required;
-- explicit rule-hit explanations;
-- audit/provenance-ready decision records;
+- observe-only `HealingPolicy` Kubernetes controller;
+- controller-gen-owned CRD/deepcopy/RBAC artifacts with zero-diff CI verification;
+- restricted ServiceAccount Kind test proving the controller cannot patch Deployments;
+- indexed Deployment-to-`HealingPolicy` event routing;
 - mock semantic executor;
-- unit/fuzz tests for guard bypass attempts.
+- unit tests for trust-boundary bypass attempts.
 
 ## Development
 
@@ -272,9 +316,18 @@ go test ./...
 go run ./cmd/controlplane
 ```
 
+Controller-specific targets:
+
+```bash
+make verify-generated
+make install-crd
+make run-controller
+make sample
+```
+
 ## Project status
 
-Early research and architecture scaffold. The repository is deliberately safety-first: autonomy will be added only after policy, audit, simulation, watchdog, rollback, evidence provenance, and verification mechanisms are independently testable.
+Early research and engineering scaffold. The repository is deliberately safety-first: autonomy will be added only after policy, audit, simulation, watchdog, rollback, evidence provenance, and verification mechanisms are independently testable.
 
 ## License
 
