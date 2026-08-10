@@ -35,8 +35,13 @@ kubectl apply -f config/manager/controller.yaml
 kubectl rollout status -n infraheal-system deployment/infraheal-controller --timeout=90s
 
 echo "==> proving target-side RBAC is read-only"
-can_get="$(kubectl auth can-i get deployments.apps --as="${controller_identity}" --all-namespaces)"
-can_patch="$(kubectl auth can-i patch deployments.apps --as="${controller_identity}" --all-namespaces)"
+# kubectl auth can-i intentionally returns a non-zero process status when the
+# authorization answer is "no". Capture the textual answer so set -e does not
+# turn an expected denial into a test harness failure.
+can_get="$(kubectl auth can-i get deployments.apps --as="${controller_identity}" --all-namespaces || true)"
+can_patch="$(kubectl auth can-i patch deployments.apps --as="${controller_identity}" --all-namespaces || true)"
+echo "controller get deployments: ${can_get}"
+echo "controller patch deployments: ${can_patch}"
 if [[ "${can_get}" != "yes" ]]; then
   echo "controller identity unexpectedly cannot read Deployments" >&2
   exit 1
