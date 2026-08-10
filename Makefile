@@ -23,6 +23,7 @@ manifests: $(CONTROLLER_GEN)
 	$(CONTROLLER_GEN) rbac:roleName=infraheal-healingpolicy-controller crd paths="./..." output:crd:artifacts:config=config/crd/bases output:rbac:artifacts:config=config/rbac
 
 generate: $(CONTROLLER_GEN)
+	rm -f api/v1alpha1/zz_generated.deepcopy.go
 	$(CONTROLLER_GEN) object:headerFile="hack/boilerplate.go.txt" paths="./api/..."
 
 verify-generated: manifests generate
