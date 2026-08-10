@@ -1,0 +1,29 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: infraheal-healingpolicy-controller
+rules:
+  - apiGroups:
+      - infraheal.io
+    resources:
+      - healingpolicies
+    verbs:
+      - get
+      - list
+      - watch
+  - apiGroups:
+      - infraheal.io
+    resources:
+      - healingpolicies/status
+    verbs:
+      - get
+      - update
+      - patch
+  - apiGroups:
+      - apps
+    resources:
+      - deployments
+    verbs:
+      - get
+      - list
+      - watch
