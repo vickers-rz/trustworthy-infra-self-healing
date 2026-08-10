@@ -25,6 +25,8 @@ func (Classifier) Classify(p domain.Proposal, _ domain.ExecutionContext) (domain
 		return domain.RiskR2, []string{"rollback_deployment catalogued as R2"}, nil
 	case domain.ActionScaleWorkload:
 		return domain.RiskR2, []string{"scale_workload catalogued as R2"}, nil
+	case domain.ActionUncordonNode:
+		return domain.RiskR2, []string{"uncordon_node catalogued as R2"}, nil
 	case domain.ActionDrainNode:
 		return domain.RiskR3, []string{"drain_node catalogued as R3"}, nil
 	case domain.ActionFailoverDatabase:
