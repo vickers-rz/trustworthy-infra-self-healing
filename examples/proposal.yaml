@@ -1,8 +1,7 @@
 proposal:
   id: rem_20260810_001
   incident_id: inc_20260810_payment_5xx
-  authority: L5_APPROVAL
-  risk: R2
+  estimated_risk: R2
   hypothesis:
     type: unhealthy_new_deployment
     confidence: 0.87
@@ -15,21 +14,34 @@ proposal:
       summary: previous revision was healthy
   action:
     type: rollback_deployment
-    target: payment-api
-    params:
-      from_revision: "193"
-      to_revision: "192"
+    rollback_deployment:
+      namespace: payments
+      deployment: payment-api
+      from_revision: 193
+      to_revision: 192
   preconditions:
     - previous revision 192 is available
     - database migration is backward-compatible
     - at least one healthy replica remains during rollout
   rollback:
-    strategy: restore_revision
-    params:
-      revision: "193"
+    type: rollback_deployment
+    rollback_deployment:
+      namespace: payments
+      deployment: payment-api
+      from_revision: 192
+      to_revision: 193
   verification:
     - error_rate_5m < 1%
     - p99_latency < 500ms
-  human_approved: true
+
+# This object comes from trusted runtime/identity/approval systems, not from the
+# model or planner that generated the proposal above.
+execution_context:
+  authority: L5_APPROVAL
+  human_approval:
+    approval_id: CHG-20260810-0042
+    approved_by: sre-operator@example.com
   operator_override: false
-  policy_version: mvp-v1
+  policy_version: mvp-v2
+  environment: staging
+  actor_id: controlplane:staging
