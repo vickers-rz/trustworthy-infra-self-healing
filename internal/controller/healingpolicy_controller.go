@@ -3,6 +3,7 @@ package controller
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
@@ -20,7 +21,10 @@ import (
 	infrahealv1alpha1 "github.com/vickers-rz/trustworthy-infra-self-healing/api/v1alpha1"
 )
 
-const defaultObserveInterval = 30 * time.Second
+const (
+	defaultObserveInterval   = 30 * time.Second
+	healingPolicyTargetIndex = "infraheal.io/targetDeployment"
+)
 
 // HealingPolicyReconciler is deliberately observation-only. It may read
 // Deployments and update HealingPolicy status, but it has no mutation path to
@@ -195,32 +199,61 @@ func setCondition(conditions *[]metav1.Condition, t string, status metav1.Condit
 	})
 }
 
+func healingPolicyTargetKey(policy *infrahealv1alpha1.HealingPolicy) string {
+	name := strings.TrimSpace(policy.Spec.Target.Name)
+	if name == "" {
+		return ""
+	}
+
+	namespace := strings.TrimSpace(policy.Spec.Target.Namespace)
+	if namespace == "" {
+		namespace = strings.TrimSpace(policy.Namespace)
+	}
+	if namespace == "" {
+		return ""
+	}
+
+	return namespace + "/" + name
+}
+
+func indexHealingPolicyTarget(obj client.Object) []string {
+	policy, ok := obj.(*infrahealv1alpha1.HealingPolicy)
+	if !ok {
+		return nil
+	}
+	key := healingPolicyTargetKey(policy)
+	if key == "" {
+		return nil
+	}
+	return []string{key}
+}
+
 func (r *HealingPolicyReconciler) mapDeploymentToPolicies(ctx context.Context, obj client.Object) []ctrl.Request {
 	deployment, ok := obj.(*appsv1.Deployment)
 	if !ok {
 		return nil
 	}
 
+	targetKey := deployment.Namespace + "/" + deployment.Name
 	var policies infrahealv1alpha1.HealingPolicyList
-	if err := r.List(ctx, &policies); err != nil {
+	if err := r.List(ctx, &policies, client.MatchingFields{healingPolicyTargetIndex: targetKey}); err != nil {
+		ctrl.LoggerFrom(ctx).Error(err, "unable to map Deployment event through HealingPolicy target index", "target", targetKey)
 		return nil
 	}
 
-	requests := make([]ctrl.Request, 0)
+	requests := make([]ctrl.Request, 0, len(policies.Items))
 	for i := range policies.Items {
 		policy := &policies.Items[i]
-		targetNamespace := policy.Spec.Target.Namespace
-		if targetNamespace == "" {
-			targetNamespace = policy.Namespace
-		}
-		if targetNamespace == deployment.Namespace && policy.Spec.Target.Name == deployment.Name {
-			requests = append(requests, ctrl.Request{NamespacedName: types.NamespacedName{Namespace: policy.Namespace, Name: policy.Name}})
-		}
+		requests = append(requests, ctrl.Request{NamespacedName: types.NamespacedName{Namespace: policy.Namespace, Name: policy.Name}})
 	}
 	return requests
 }
 
 func (r *HealingPolicyReconciler) SetupWithManager(mgr ctrl.Manager) error {
+	if err := mgr.GetFieldIndexer().IndexField(context.Background(), &infrahealv1alpha1.HealingPolicy{}, healingPolicyTargetIndex, indexHealingPolicyTarget); err != nil {
+		return fmt.Errorf("index HealingPolicy targets: %w", err)
+	}
+
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&infrahealv1alpha1.HealingPolicy{}, builder.WithPredicates(predicate.GenerationChangedPredicate{})).
 		Watches(&appsv1.Deployment{}, handler.EnqueueRequestsFromMapFunc(r.mapDeploymentToPolicies)).
