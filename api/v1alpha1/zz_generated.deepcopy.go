@@ -2,7 +2,10 @@
 // This file is maintained manually until controller-gen becomes part of the build.
 package v1alpha1
 
-import runtime "k8s.io/apimachinery/pkg/runtime"
+import (
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	runtime "k8s.io/apimachinery/pkg/runtime"
+)
 
 func (in *HealingPolicy) DeepCopyInto(out *HealingPolicy) {
 	*out = *in
