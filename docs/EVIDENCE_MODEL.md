@@ -2,6 +2,39 @@
 
 InfraSelfHeal treats evidence as a first-class engineering object rather than as arbitrary text placed into an LLM context window.
 
+## Trust boundary
+
+Evidence provenance is no longer embedded inside probabilistic planner output.
+
+The decision path has three explicit inputs:
+
+```text
+Proposal              ExecutionContext           EvidenceBundle
+probabilistic          trusted runtime            trusted evidence plane
+     │                       │                           │
+     └───────────────────────┼───────────────────────────┘
+                             ▼
+                     deterministic Guard
+```
+
+A `Proposal` may reference:
+
+```text
+evidence_bundle_id
+evidence_ids[]
+```
+
+but it cannot author or rewrite the referenced evidence object's:
+
+- source;
+- collector identity;
+- timestamps;
+- freshness deadline;
+- trust metadata;
+- integrity digest.
+
+The Guard receives the actual `EvidenceBundle` separately from the trusted Evidence Plane, checks that bundle/incident IDs match, and resolves every referenced evidence ID inside that bundle. Unknown, duplicate, or substituted references fail closed.
+
 ## Why
 
 A trustworthy remediation decision must be reconstructable after the incident. A reviewer should be able to determine:
@@ -66,7 +99,7 @@ Initial evidence kinds are:
 - topology;
 - operator annotation.
 
-Kinds matter because freshness, trust and evaluation policy will eventually differ by evidence class.
+Kinds matter because freshness, trust and evaluation policy differ by evidence class.
 
 ## Trust is not hypothesis weight
 
@@ -88,7 +121,7 @@ P(hypothesis | evidence) = trust
 
 and it must not be treated as a model-controlled weight.
 
-Evidence weighting, ranking and confidence calibration belong to the diagnosis layer and must be evaluated separately.
+Evidence weighting, ranking and confidence calibration belong to the diagnosis layer and must be evaluated separately. A future source registry will assign/verify trust outside the model before trust metadata is used for authorization.
 
 ## Freshness
 
@@ -102,16 +135,46 @@ unknown
 
 `unknown` is intentionally distinct from `fresh`.
 
-An evidence source may declare `FreshUntil`. If it does not, the system records freshness as unknown instead of inventing a TTL.
+An evidence collector may declare `FreshUntil`. If it does not, the system records freshness as unknown instead of inventing a TTL.
 
-The current domain model does not yet hard-deny all stale/unknown evidence because freshness semantics are type-specific. For example:
+### Trusted decision time
 
-- a Kubernetes workload snapshot may become stale in seconds;
-- a five-minute Prometheus aggregate has a defined observation window;
-- a runbook may remain useful for months but could still be outdated;
-- a postmortem is historical evidence and should not be judged by the same TTL as live telemetry.
+Freshness is evaluated against `ExecutionContext.DecisionTime`, not a hidden call to the current wall clock.
 
-A later evidence-policy layer will define requirements per evidence kind and action class.
+That makes a decision reproducible:
+
+```text
+same Proposal
++ same ExecutionContext.DecisionTime
++ same EvidenceBundle
+= same freshness result
+```
+
+An audit/replay months later therefore does not change an original `fresh` decision into `stale` merely because the replay happened later.
+
+### Initial authorization policy
+
+Operational/live evidence kinds are:
+
+- metric;
+- log;
+- trace;
+- Kubernetes state;
+- Kubernetes event;
+- change;
+- topology;
+- operator annotation.
+
+If a mutable proposal selects one of these items, its freshness must be known and it must still be fresh at trusted decision time. `stale` or `unknown` operational evidence fails closed.
+
+Reference evidence kinds:
+
+- runbook;
+- historical incident.
+
+Reference evidence may accompany a decision even when its real-time freshness is unknown, but reference material **cannot by itself establish current operational state**. Every mutable remediation requires at least one selected fresh operational evidence item.
+
+This deliberately avoids applying the same TTL semantics to a five-second workload snapshot and a historical postmortem.
 
 ## Time semantics
 
@@ -120,9 +183,10 @@ A later evidence-policy layer will define requirements per evidence kind and act
 ```text
 ObservedAt   = when the underlying signal/fact applies
 CollectedAt  = when InfraSelfHeal acquired/normalized it
+DecisionTime = when the trusted control plane evaluates authorization
 ```
 
-This distinction matters for delayed telemetry and incident reconstruction.
+This distinction matters for delayed telemetry, deterministic replay and incident reconstruction.
 
 `WindowStart` and `WindowEnd` are optional but must be supplied together. They are useful for aggregates such as:
 
@@ -134,7 +198,9 @@ error_rate over [04:10, 04:15]
 
 `DigestSHA256` is optional in the first model. When present it must be a valid 256-bit hexadecimal digest.
 
-The digest is not intended to prove the original source was truthful. It only allows a later audit record to prove which exact evidence artifact was used in a decision.
+The digest is not intended to prove the original source was truthful. It allows a later audit record to prove which exact evidence artifact was used in a decision.
+
+A future evidence-store step should also seal/hash the bundle as a whole rather than relying only on per-item digests.
 
 ## Evidence relations
 
@@ -153,6 +219,8 @@ ev-101 ──supports────> hypothesis/deployment-regression
 ev-102 ──contradicts─> hypothesis/deployment-regression
 ```
 
+Hypotheses now have stable IDs so relations and audit records do not depend on generated prose as an identifier.
+
 This is important because a retrieval system should not only retrieve documents that confirm the current hypothesis. Contradictory evidence must remain representable and reviewable.
 
 ## Missing evidence
@@ -170,11 +238,11 @@ missing:
 
 This prevents “absence from the prompt” from being confused with “evidence that does not exist”.
 
-A bundle may therefore contain only explicitly missing evidence. That represents an evidence-poor incident honestly instead of fabricating context.
+A bundle may therefore contain only explicitly missing evidence. That represents an evidence-poor incident honestly instead of fabricating context. Such a bundle cannot authorize mutation because a mutable decision still requires selected fresh operational evidence.
 
-## Validation
+## Validation and binding
 
-The deterministic domain validator currently rejects:
+The deterministic evidence/guard path currently rejects:
 
 - missing IDs;
 - unknown evidence kinds;
@@ -184,20 +252,24 @@ The deterministic domain validator currently rejects:
 - one-sided or reversed observation windows;
 - freshness deadlines before the observation;
 - malformed SHA-256 values;
-- duplicate evidence IDs;
+- duplicate evidence IDs in a bundle;
 - relations to nonexistent evidence;
 - relations without claim IDs;
-- malformed missing-evidence declarations.
-
-The remediation guard validates every evidence reference supplied by a mutable proposal.
+- malformed missing-evidence declarations;
+- a Proposal whose `evidence_bundle_id` differs from the trusted bundle;
+- a bundle whose incident ID differs from the Proposal incident;
+- empty, duplicate or unknown proposal evidence references;
+- missing trusted decision time;
+- stale or freshness-unknown selected operational evidence;
+- mutable proposals supported only by reference documents.
 
 ## Next steps
 
-1. migrate proposals from a flat `[]EvidenceRef` to a referenced/sealed `EvidenceBundle`;
-2. derive Kubernetes observations from `HealingPolicy` status into evidence records;
-3. add deterministic freshness policy by evidence kind;
-4. add source trust policy controlled outside the LLM;
-5. add Prometheus/OpenTelemetry/Kubernetes-event adapters;
-6. attach supporting and contradicting relations to explicit hypothesis IDs;
-7. persist content hashes and audit bundle IDs;
-8. evaluate RAG retrieval for both supporting and contradictory evidence.
+1. derive Kubernetes observations from `HealingPolicy` status into EvidenceBundle records;
+2. add a trusted source registry that assigns/validates source trust outside the LLM;
+3. add Prometheus/OpenTelemetry/Kubernetes-event adapters;
+4. bind supporting/contradicting relations more tightly to diagnosis outputs;
+5. persist bundle-level hashes/signatures and audit bundle IDs;
+6. add evidence diversity/corroboration policy for higher-risk actions;
+7. evaluate RAG retrieval for both supporting and contradictory evidence;
+8. only then connect structured LLM diagnosis to this evidence contract.
