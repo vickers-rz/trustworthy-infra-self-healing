@@ -6,12 +6,39 @@ proposal:
     type: unhealthy_new_deployment
     confidence: 0.87
   evidence:
-    - uri: deploy://payment-api/revision/193
+    - id: ev_deploy_193
+      kind: change
+      uri: k8s://payments/deployment/payment-api/revision/193
+      source: kubernetes-apiserver
+      collector: infraheal-k8s-observer/v0
+      subject: k8s://payments/deployment/payment-api
       summary: deployment changed 12 minutes before error-rate increase
-    - uri: metric://prometheus/payment-api/error-rate
+      observed_at: 2026-08-10T04:00:00Z
+      collected_at: 2026-08-10T04:00:01Z
+      fresh_until: 2026-08-10T04:15:00Z
+      trust: high
+    - id: ev_error_rate
+      kind: metric
+      uri: prometheus://payment-api/error-rate?window=5m
+      source: prometheus
+      collector: infraheal-prometheus-adapter/v0
+      subject: k8s://payments/deployment/payment-api
       summary: 5xx rose immediately after revision 193 rollout
-    - uri: deploy://payment-api/revision/192
+      observed_at: 2026-08-10T04:12:00Z
+      collected_at: 2026-08-10T04:12:02Z
+      fresh_until: 2026-08-10T04:14:00Z
+      trust: high
+    - id: ev_previous_revision
+      kind: kubernetes_state
+      uri: k8s://payments/deployment/payment-api/revision/192
+      source: kubernetes-apiserver
+      collector: infraheal-k8s-observer/v0
+      subject: k8s://payments/deployment/payment-api
       summary: previous revision was healthy
+      observed_at: 2026-08-10T04:12:00Z
+      collected_at: 2026-08-10T04:12:01Z
+      fresh_until: 2026-08-10T04:15:00Z
+      trust: high
   action:
     type: rollback_deployment
     rollback_deployment:
