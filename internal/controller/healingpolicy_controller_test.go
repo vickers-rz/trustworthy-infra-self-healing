@@ -22,14 +22,14 @@ func TestReconcileObservesHealthyDeploymentWithoutMutatingIt(t *testing.T) {
 	policy := &infrahealv1alpha1.HealingPolicy{
 		ObjectMeta: metav1.ObjectMeta{Name: "api", Namespace: "default", Generation: 3},
 		Spec: infrahealv1alpha1.HealingPolicySpec{
-			Target: infrahealv1alpha1.TargetReference{Name: "api"},
-			Mode: infrahealv1alpha1.ObservationModeObserve,
+			Target:                 infrahealv1alpha1.TargetReference{Name: "api"},
+			Mode:                   infrahealv1alpha1.ObservationModeObserve,
 			ObserveIntervalSeconds: 15,
 		},
 	}
 	deployment := &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{Name: "api", Namespace: "default", Generation: 7},
-		Spec: appsv1.DeploymentSpec{Replicas: &replicas},
+		Spec:       appsv1.DeploymentSpec{Replicas: &replicas},
 		Status: appsv1.DeploymentStatus{
 			ObservedGeneration: 7,
 			AvailableReplicas:  2,
@@ -78,11 +78,75 @@ func TestReconcileObservesHealthyDeploymentWithoutMutatingIt(t *testing.T) {
 	}
 }
 
+func TestReconcilePreservesLastTransitionTimeWhenConditionStatusIsStable(t *testing.T) {
+	scheme := testScheme(t)
+	replicas := int32(1)
+	policy := &infrahealv1alpha1.HealingPolicy{
+		ObjectMeta: metav1.ObjectMeta{Name: "api", Namespace: "default", Generation: 1},
+		Spec: infrahealv1alpha1.HealingPolicySpec{
+			Target: infrahealv1alpha1.TargetReference{Name: "api"},
+		},
+	}
+	deployment := &appsv1.Deployment{
+		ObjectMeta: metav1.ObjectMeta{Name: "api", Namespace: "default", Generation: 2},
+		Spec:       appsv1.DeploymentSpec{Replicas: &replicas},
+		Status: appsv1.DeploymentStatus{
+			ObservedGeneration: 2,
+			AvailableReplicas:  1,
+			ReadyReplicas:      1,
+			UpdatedReplicas:    1,
+		},
+	}
+	c := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithStatusSubresource(&infrahealv1alpha1.HealingPolicy{}).
+		WithObjects(policy, deployment).
+		Build()
+
+	current := time.Date(2026, 8, 10, 12, 0, 0, 0, time.UTC)
+	r := &HealingPolicyReconciler{Client: c, Scheme: scheme, Now: func() time.Time { return current }}
+	req := ctrl.Request{NamespacedName: types.NamespacedName{Namespace: "default", Name: "api"}}
+	if _, err := r.Reconcile(context.Background(), req); err != nil {
+		t.Fatalf("first reconcile: %v", err)
+	}
+
+	var first infrahealv1alpha1.HealingPolicy
+	if err := c.Get(context.Background(), req.NamespacedName, &first); err != nil {
+		t.Fatalf("get first status: %v", err)
+	}
+	firstHealthy := conditionByType(first.Status.Conditions, infrahealv1alpha1.ConditionObservedHealthy)
+	if firstHealthy == nil {
+		t.Fatal("healthy condition missing after first reconcile")
+	}
+	firstTransition := firstHealthy.LastTransitionTime
+	firstObserved := first.Status.LastObservedTime.DeepCopy()
+
+	current = current.Add(10 * time.Minute)
+	if _, err := r.Reconcile(context.Background(), req); err != nil {
+		t.Fatalf("second reconcile: %v", err)
+	}
+
+	var second infrahealv1alpha1.HealingPolicy
+	if err := c.Get(context.Background(), req.NamespacedName, &second); err != nil {
+		t.Fatalf("get second status: %v", err)
+	}
+	secondHealthy := conditionByType(second.Status.Conditions, infrahealv1alpha1.ConditionObservedHealthy)
+	if secondHealthy == nil {
+		t.Fatal("healthy condition missing after second reconcile")
+	}
+	if !secondHealthy.LastTransitionTime.Equal(&firstTransition) {
+		t.Fatalf("condition transition time changed without a status transition: first=%s second=%s", firstTransition.Time, secondHealthy.LastTransitionTime.Time)
+	}
+	if second.Status.LastObservedTime == nil || !second.Status.LastObservedTime.After(firstObserved.Time) {
+		t.Fatalf("observation heartbeat did not advance: first=%v second=%v", firstObserved, second.Status.LastObservedTime)
+	}
+}
+
 func TestReconcileReportsMissingDeployment(t *testing.T) {
 	scheme := testScheme(t)
 	policy := &infrahealv1alpha1.HealingPolicy{
 		ObjectMeta: metav1.ObjectMeta{Name: "missing", Namespace: "default", Generation: 1},
-		Spec: infrahealv1alpha1.HealingPolicySpec{Target: infrahealv1alpha1.TargetReference{Name: "does-not-exist"}},
+		Spec:       infrahealv1alpha1.HealingPolicySpec{Target: infrahealv1alpha1.TargetReference{Name: "does-not-exist"}},
 	}
 	c := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(&infrahealv1alpha1.HealingPolicy{}).WithObjects(policy).Build()
 	r := &HealingPolicyReconciler{Client: c, Scheme: scheme, Now: func() time.Time { return time.Unix(0, 0).UTC() }}
@@ -114,11 +178,11 @@ func TestDeploymentEventMapsToMatchingPolicy(t *testing.T) {
 	scheme := testScheme(t)
 	matching := &infrahealv1alpha1.HealingPolicy{
 		ObjectMeta: metav1.ObjectMeta{Name: "match", Namespace: "ops"},
-		Spec: infrahealv1alpha1.HealingPolicySpec{Target: infrahealv1alpha1.TargetReference{Namespace: "apps", Name: "api"}},
+		Spec:       infrahealv1alpha1.HealingPolicySpec{Target: infrahealv1alpha1.TargetReference{Namespace: "apps", Name: "api"}},
 	}
 	nonMatching := &infrahealv1alpha1.HealingPolicy{
 		ObjectMeta: metav1.ObjectMeta{Name: "other", Namespace: "ops"},
-		Spec: infrahealv1alpha1.HealingPolicySpec{Target: infrahealv1alpha1.TargetReference{Namespace: "apps", Name: "worker"}},
+		Spec:       infrahealv1alpha1.HealingPolicySpec{Target: infrahealv1alpha1.TargetReference{Namespace: "apps", Name: "worker"}},
 	}
 	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(matching, nonMatching).Build()
 	r := &HealingPolicyReconciler{Client: c, Scheme: scheme}
@@ -142,10 +206,18 @@ func testScheme(t *testing.T) *runtime.Scheme {
 }
 
 func conditionStatus(conditions []metav1.Condition, kind string) metav1.ConditionStatus {
-	for _, c := range conditions {
-		if c.Type == kind {
-			return c.Status
+	condition := conditionByType(conditions, kind)
+	if condition == nil {
+		return metav1.ConditionUnknown
+	}
+	return condition.Status
+}
+
+func conditionByType(conditions []metav1.Condition, kind string) *metav1.Condition {
+	for i := range conditions {
+		if conditions[i].Type == kind {
+			return &conditions[i]
 		}
 	}
-	return metav1.ConditionUnknown
+	return nil
 }
