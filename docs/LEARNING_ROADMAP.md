@@ -39,9 +39,26 @@ This phase is intentionally moved forward because writing Kubernetes controllers
 - idempotent reconciliation;
 - controller testing.
 
-**Build:** a non-mutating `HealingPolicy`/`HealingRun` controller in Kind that observes target workloads, writes status, and emits auditable events.
+### Milestone 1 — Observe-only `HealingPolicy`
 
-**Exit criterion:** controller restarts are safe, reconciliation is idempotent, status is meaningful, and no LLM is involved yet.
+The first controller is intentionally incapable of remediation. It observes an `apps/v1 Deployment`, writes only the `HealingPolicy/status` subresource, and watches Deployment changes so observation is event-driven as well as periodic.
+
+Progress:
+
+- [x] define `infraheal.io/v1alpha1` and `HealingPolicy`;
+- [x] add a namespaced CRD with a status subresource;
+- [x] reconcile a Deployment target without mutating it;
+- [x] report target resolution and observed availability as status conditions;
+- [x] watch Deployment changes and enqueue matching policies;
+- [x] use target-side RBAC containing only `get/list/watch`;
+- [x] add fake-client tests proving Deployment spec remains unchanged;
+- [x] pin a Go 1.24-compatible controller-runtime/Kubernetes dependency line;
+- [x] commit and CI-check the Go module graph;
+- [ ] add a reproducible Kind integration test;
+- [ ] generate CRD/deepcopy/RBAC artifacts with controller-gen instead of maintaining the bootstrap deepcopy file manually;
+- [ ] add `HealingRun` as a separate execution/audit lifecycle resource after the observation contract is stable.
+
+**Exit criterion:** controller restarts are safe, reconciliation is idempotent, status is meaningful, the Kind test is reproducible, target-side RBAC remains read-only, and no LLM is involved yet.
 
 ## Phase 2 — Observability and evidence graph
 
