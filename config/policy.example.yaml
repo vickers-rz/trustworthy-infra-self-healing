@@ -1,8 +1,18 @@
-version: mvp-v1
+version: mvp-v2
 mode: fail-closed
+
+trust_boundary:
+  proposal_can_grant_authority: false
+  proposal_can_assert_human_approval: false
+  proposal_risk_is_authoritative: false
+  effective_risk_source: deterministic_action_classifier
+  operator_override_source: trusted_runtime
+  approval_source: trusted_identity_or_change_system
+
 operator_override_precedence: absolute
 learned_state_can_change_authority: false
 arbitrary_shell_allowed: false
+free_form_action_params_allowed: false
 
 risk_matrix:
   R1:
