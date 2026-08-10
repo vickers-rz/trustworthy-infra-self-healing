@@ -7,6 +7,7 @@ import (
 
 	appsv1 "k8s.io/api/apps/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -82,21 +83,44 @@ func (r *HealingPolicyReconciler) observedDeploymentStatus(policy *infrahealv1al
 		ReadyReplicas:     deployment.Status.ReadyReplicas,
 		UpdatedReplicas:   deployment.Status.UpdatedReplicas,
 		LastObservedTime:  &now,
+		Conditions:        append([]metav1.Condition(nil), policy.Status.Conditions...),
 	}
 
-	status.Conditions = append(status.Conditions,
-		condition(infrahealv1alpha1.ConditionTargetResolved, metav1.ConditionTrue, "DeploymentResolved", "target Deployment was resolved", policy.Generation, now),
-		condition(infrahealv1alpha1.ConditionObserveOnly, metav1.ConditionTrue, "SafetyBoundary", "controller is read-only for the target workload", policy.Generation, now),
+	setCondition(&status.Conditions,
+		infrahealv1alpha1.ConditionTargetResolved,
+		metav1.ConditionTrue,
+		"DeploymentResolved",
+		"target Deployment was resolved",
+		policy.Generation,
+		now,
+	)
+	setCondition(&status.Conditions,
+		infrahealv1alpha1.ConditionObserveOnly,
+		metav1.ConditionTrue,
+		"SafetyBoundary",
+		"controller is read-only for the target workload",
+		policy.Generation,
+		now,
 	)
 
 	healthy := desired > 0 && deployment.Status.AvailableReplicas >= desired && deployment.Status.ObservedGeneration >= deployment.Generation
 	if healthy {
-		status.Conditions = append(status.Conditions,
-			condition(infrahealv1alpha1.ConditionObservedHealthy, metav1.ConditionTrue, "Available", "observed Deployment satisfies the MVP availability check", policy.Generation, now),
+		setCondition(&status.Conditions,
+			infrahealv1alpha1.ConditionObservedHealthy,
+			metav1.ConditionTrue,
+			"Available",
+			"observed Deployment satisfies the MVP availability check",
+			policy.Generation,
+			now,
 		)
 	} else {
-		status.Conditions = append(status.Conditions,
-			condition(infrahealv1alpha1.ConditionObservedHealthy, metav1.ConditionFalse, "Unavailable", "observed Deployment does not satisfy the MVP availability check", policy.Generation, now),
+		setCondition(&status.Conditions,
+			infrahealv1alpha1.ConditionObservedHealthy,
+			metav1.ConditionFalse,
+			"Unavailable",
+			"observed Deployment does not satisfy the MVP availability check",
+			policy.Generation,
+			now,
 		)
 	}
 	return status
@@ -104,16 +128,37 @@ func (r *HealingPolicyReconciler) observedDeploymentStatus(policy *infrahealv1al
 
 func (r *HealingPolicyReconciler) missingTargetStatus(policy *infrahealv1alpha1.HealingPolicy, namespace string) infrahealv1alpha1.HealingPolicyStatus {
 	now := metav1.NewTime(r.now())
-	return infrahealv1alpha1.HealingPolicyStatus{
+	status := infrahealv1alpha1.HealingPolicyStatus{
 		ObservedGeneration: policy.Generation,
 		TargetFound:        false,
 		LastObservedTime:   &now,
-		Conditions: []metav1.Condition{
-			condition(infrahealv1alpha1.ConditionTargetResolved, metav1.ConditionFalse, "DeploymentNotFound", fmt.Sprintf("target Deployment %s/%s was not found", namespace, policy.Spec.Target.Name), policy.Generation, now),
-			condition(infrahealv1alpha1.ConditionObserveOnly, metav1.ConditionTrue, "SafetyBoundary", "controller is read-only for the target workload", policy.Generation, now),
-			condition(infrahealv1alpha1.ConditionObservedHealthy, metav1.ConditionUnknown, "TargetUnavailable", "health cannot be assessed until the target exists", policy.Generation, now),
-		},
+		Conditions:        append([]metav1.Condition(nil), policy.Status.Conditions...),
 	}
+	setCondition(&status.Conditions,
+		infrahealv1alpha1.ConditionTargetResolved,
+		metav1.ConditionFalse,
+		"DeploymentNotFound",
+		fmt.Sprintf("target Deployment %s/%s was not found", namespace, policy.Spec.Target.Name),
+		policy.Generation,
+		now,
+	)
+	setCondition(&status.Conditions,
+		infrahealv1alpha1.ConditionObserveOnly,
+		metav1.ConditionTrue,
+		"SafetyBoundary",
+		"controller is read-only for the target workload",
+		policy.Generation,
+		now,
+	)
+	setCondition(&status.Conditions,
+		infrahealv1alpha1.ConditionObservedHealthy,
+		metav1.ConditionUnknown,
+		"TargetUnavailable",
+		"health cannot be assessed until the target exists",
+		policy.Generation,
+		now,
+	)
+	return status
 }
 
 func (r *HealingPolicyReconciler) updateStatus(ctx context.Context, policy *infrahealv1alpha1.HealingPolicy, next infrahealv1alpha1.HealingPolicyStatus) error {
@@ -135,15 +180,15 @@ func observationInterval(seconds int32) time.Duration {
 	return time.Duration(seconds) * time.Second
 }
 
-func condition(t string, status metav1.ConditionStatus, reason, message string, observedGeneration int64, now metav1.Time) metav1.Condition {
-	return metav1.Condition{
+func setCondition(conditions *[]metav1.Condition, t string, status metav1.ConditionStatus, reason, message string, observedGeneration int64, now metav1.Time) {
+	apimeta.SetStatusCondition(conditions, metav1.Condition{
 		Type:               t,
 		Status:             status,
 		Reason:             reason,
 		Message:            message,
 		ObservedGeneration: observedGeneration,
 		LastTransitionTime: now,
-	}
+	})
 }
 
 func (r *HealingPolicyReconciler) mapDeploymentToPolicies(ctx context.Context, obj client.Object) []ctrl.Request {
