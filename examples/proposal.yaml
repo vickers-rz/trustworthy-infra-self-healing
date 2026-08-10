@@ -1,0 +1,35 @@
+proposal:
+  id: rem_20260810_001
+  incident_id: inc_20260810_payment_5xx
+  authority: L5_APPROVAL
+  risk: R2
+  hypothesis:
+    type: unhealthy_new_deployment
+    confidence: 0.87
+  evidence:
+    - uri: deploy://payment-api/revision/193
+      summary: deployment changed 12 minutes before error-rate increase
+    - uri: metric://prometheus/payment-api/error-rate
+      summary: 5xx rose immediately after revision 193 rollout
+    - uri: deploy://payment-api/revision/192
+      summary: previous revision was healthy
+  action:
+    type: rollback_deployment
+    target: payment-api
+    params:
+      from_revision: "193"
+      to_revision: "192"
+  preconditions:
+    - previous revision 192 is available
+    - database migration is backward-compatible
+    - at least one healthy replica remains during rollout
+  rollback:
+    strategy: restore_revision
+    params:
+      revision: "193"
+  verification:
+    - error_rate_5m < 1%
+    - p99_latency < 500ms
+  human_approved: true
+  operator_override: false
+  policy_version: mvp-v1

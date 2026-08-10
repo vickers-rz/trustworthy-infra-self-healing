@@ -1,0 +1,21 @@
+version: mvp-v1
+mode: fail-closed
+operator_override_precedence: absolute
+learned_state_can_change_authority: false
+arbitrary_shell_allowed: false
+
+risk_matrix:
+  R1:
+    delegated: true
+  R2:
+    delegated: false
+    approval_required: true
+    rollback_required: true
+  R3:
+    delegated: false
+    approval_required: true
+    rollback_required: true
+  R4:
+    allowed: false
+  R5:
+    allowed: false
