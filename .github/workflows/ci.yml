@@ -20,18 +20,8 @@ jobs:
         run: |
           go mod tidy
           git diff --exit-code -- go.mod go.sum
-      - name: Generate Kubernetes artifacts
-        run: |
-          make manifests
-          make generate
-      - name: Upload generated artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: controller-generated
-          path: |
-            api/v1alpha1/zz_generated.deepcopy.go
-            config/crd/bases
-            config/rbac
+      - name: Verify generated Kubernetes artifacts
+        run: make verify-generated
       - name: Test
         run: go test ./...
       - name: Vet
