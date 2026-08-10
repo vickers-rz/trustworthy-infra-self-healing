@@ -174,22 +174,67 @@ func TestReconcileReportsMissingDeployment(t *testing.T) {
 	}
 }
 
-func TestDeploymentEventMapsToMatchingPolicy(t *testing.T) {
-	scheme := testScheme(t)
-	matching := &infrahealv1alpha1.HealingPolicy{
-		ObjectMeta: metav1.ObjectMeta{Name: "match", Namespace: "ops"},
+func TestHealingPolicyTargetIndexUsesExplicitTargetNamespace(t *testing.T) {
+	policy := &infrahealv1alpha1.HealingPolicy{
+		ObjectMeta: metav1.ObjectMeta{Name: "policy", Namespace: "ops"},
 		Spec:       infrahealv1alpha1.HealingPolicySpec{Target: infrahealv1alpha1.TargetReference{Namespace: "apps", Name: "api"}},
 	}
-	nonMatching := &infrahealv1alpha1.HealingPolicy{
-		ObjectMeta: metav1.ObjectMeta{Name: "other", Namespace: "ops"},
+	values := indexHealingPolicyTarget(policy)
+	if len(values) != 1 || values[0] != "apps/api" {
+		t.Fatalf("unexpected index values: %#v", values)
+	}
+}
+
+func TestHealingPolicyTargetIndexDefaultsToPolicyNamespace(t *testing.T) {
+	policy := &infrahealv1alpha1.HealingPolicy{
+		ObjectMeta: metav1.ObjectMeta{Name: "policy", Namespace: "apps"},
+		Spec:       infrahealv1alpha1.HealingPolicySpec{Target: infrahealv1alpha1.TargetReference{Name: "api"}},
+	}
+	values := indexHealingPolicyTarget(policy)
+	if len(values) != 1 || values[0] != "apps/api" {
+		t.Fatalf("unexpected index values: %#v", values)
+	}
+}
+
+func TestDeploymentEventMapsToMatchingPoliciesThroughIndex(t *testing.T) {
+	scheme := testScheme(t)
+	matchingExplicit := &infrahealv1alpha1.HealingPolicy{
+		ObjectMeta: metav1.ObjectMeta{Name: "explicit", Namespace: "ops"},
+		Spec:       infrahealv1alpha1.HealingPolicySpec{Target: infrahealv1alpha1.TargetReference{Namespace: "apps", Name: "api"}},
+	}
+	matchingImplicit := &infrahealv1alpha1.HealingPolicy{
+		ObjectMeta: metav1.ObjectMeta{Name: "implicit", Namespace: "apps"},
+		Spec:       infrahealv1alpha1.HealingPolicySpec{Target: infrahealv1alpha1.TargetReference{Name: "api"}},
+	}
+	nonMatchingName := &infrahealv1alpha1.HealingPolicy{
+		ObjectMeta: metav1.ObjectMeta{Name: "worker", Namespace: "ops"},
 		Spec:       infrahealv1alpha1.HealingPolicySpec{Target: infrahealv1alpha1.TargetReference{Namespace: "apps", Name: "worker"}},
 	}
-	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(matching, nonMatching).Build()
+	nonMatchingNamespace := &infrahealv1alpha1.HealingPolicy{
+		ObjectMeta: metav1.ObjectMeta{Name: "other-namespace", Namespace: "other"},
+		Spec:       infrahealv1alpha1.HealingPolicySpec{Target: infrahealv1alpha1.TargetReference{Name: "api"}},
+	}
+	c := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithIndex(&infrahealv1alpha1.HealingPolicy{}, healingPolicyTargetIndex, indexHealingPolicyTarget).
+		WithObjects(matchingExplicit, matchingImplicit, nonMatchingName, nonMatchingNamespace).
+		Build()
 	r := &HealingPolicyReconciler{Client: c, Scheme: scheme}
 
 	requests := r.mapDeploymentToPolicies(context.Background(), &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Namespace: "apps", Name: "api"}})
-	if len(requests) != 1 || requests[0].Namespace != "ops" || requests[0].Name != "match" {
-		t.Fatalf("unexpected mapped requests: %#v", requests)
+	if len(requests) != 2 {
+		t.Fatalf("expected two matching requests, got %#v", requests)
+	}
+
+	got := map[types.NamespacedName]bool{}
+	for _, request := range requests {
+		got[request.NamespacedName] = true
+	}
+	if !got[types.NamespacedName{Namespace: "ops", Name: "explicit"}] {
+		t.Fatalf("explicit cross-namespace policy missing from requests: %#v", requests)
+	}
+	if !got[types.NamespacedName{Namespace: "apps", Name: "implicit"}] {
+		t.Fatalf("implicit same-namespace policy missing from requests: %#v", requests)
 	}
 }
 
