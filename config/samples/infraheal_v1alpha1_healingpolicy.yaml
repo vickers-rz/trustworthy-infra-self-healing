@@ -1,0 +1,10 @@
+apiVersion: infraheal.io/v1alpha1
+kind: HealingPolicy
+metadata:
+  name: demo-api
+  namespace: default
+spec:
+  mode: Observe
+  observeIntervalSeconds: 30
+  target:
+    name: demo-api
