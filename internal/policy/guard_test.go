@@ -7,32 +7,50 @@ import (
 	"github.com/vickers-rz/trustworthy-infra-self-healing/internal/domain"
 )
 
+func riskPtr(r domain.RiskClass) *domain.RiskClass { return &r }
+
 func baseProposal() domain.Proposal {
 	return domain.Proposal{
 		ID:            "rem_test",
 		IncidentID:    "inc_test",
-		Authority:     domain.AuthorityDelegated,
-		Risk:          domain.RiskR1,
 		Hypothesis:    domain.Hypothesis{Type: "unhealthy_workload", Confidence: 0.9},
 		Evidence:      []domain.EvidenceRef{{URI: "metric://test", Summary: "degraded"}},
-		Action:        domain.Action{Type: domain.ActionRestartWorkload, Target: "api"},
+		EstimatedRisk: riskPtr(domain.RiskR1),
+		Action: domain.Action{
+			Type: domain.ActionRestartWorkload,
+			RestartWorkload: &domain.RestartWorkloadAction{
+				Namespace: "default",
+				Workload:  "api",
+			},
+		},
 		Preconditions: []string{"stateless"},
 		Verification:  []string{"healthy"},
-		PolicyVersion: "test-v1",
+	}
+}
+
+func baseContext() domain.ExecutionContext {
+	return domain.ExecutionContext{
+		Authority:     domain.AuthorityDelegated,
+		PolicyVersion: "test-v2",
+		Environment:   "staging",
+		ActorID:       "controlplane:test",
 	}
 }
 
 func TestAllowsLowRiskDelegatedSemanticAction(t *testing.T) {
-	d := NewGuard().Evaluate(baseProposal())
+	d := NewGuard().Evaluate(baseProposal(), baseContext())
 	if !d.Allowed {
 		t.Fatalf("expected allow, got %#v", d)
+	}
+	if d.EffectiveRisk != domain.RiskR1 {
+		t.Fatalf("expected R1 effective risk, got %s", d.EffectiveRisk)
 	}
 }
 
 func TestOperatorOverrideAlwaysWins(t *testing.T) {
-	p := baseProposal()
-	p.OperatorOverride = true
-	d := NewGuard().Evaluate(p)
+	ctx := baseContext()
+	ctx.OperatorOverride = true
+	d := NewGuard().Evaluate(baseProposal(), ctx)
 	if d.Allowed || !contains(d.Reasons, "operator override") {
 		t.Fatalf("expected override denial, got %#v", d)
 	}
@@ -41,35 +59,101 @@ func TestOperatorOverrideAlwaysWins(t *testing.T) {
 func TestUnknownActionFailsClosed(t *testing.T) {
 	p := baseProposal()
 	p.Action.Type = domain.ActionType("run_shell")
-	d := NewGuard().Evaluate(p)
-	if d.Allowed || !contains(d.Reasons, "allowlist") {
-		t.Fatalf("expected allowlist denial, got %#v", d)
+	d := NewGuard().Evaluate(p, baseContext())
+	if d.Allowed || !contains(d.Reasons, "risk classification failed") {
+		t.Fatalf("expected classification denial, got %#v", d)
 	}
 }
 
-func TestR2NeedsRollbackAndApprovalInMVP(t *testing.T) {
-	p := baseProposal()
-	p.Risk = domain.RiskR2
-	p.Action.Type = domain.ActionRollbackDeployment
-	d := NewGuard().Evaluate(p)
+func TestUnderreportedRiskFailsClosed(t *testing.T) {
+	p := rollbackProposal()
+	p.EstimatedRisk = riskPtr(domain.RiskR1)
+	ctx := approvedContext()
+
+	d := NewGuard().Evaluate(p, ctx)
+	if d.Allowed || !contains(d.Reasons, "under-reports deterministic effective risk") {
+		t.Fatalf("expected risk under-reporting denial, got %#v", d)
+	}
+	if d.EffectiveRisk != domain.RiskR2 {
+		t.Fatalf("expected deterministic R2 risk, got %s", d.EffectiveRisk)
+	}
+}
+
+func TestR2NeedsRollbackAndIsNotDelegatedInMVP(t *testing.T) {
+	p := rollbackProposal()
+	p.Rollback = nil
+	ctx := baseContext()
+
+	d := NewGuard().Evaluate(p, ctx)
 	if d.Allowed {
 		t.Fatalf("expected R2 denial, got %#v", d)
 	}
-	if !contains(d.Reasons, "rollback") || !contains(d.Reasons, "not autonomously delegated") {
+	if !contains(d.Reasons, "typed rollback") || !contains(d.Reasons, "not autonomously delegated") {
 		t.Fatalf("expected rollback and delegation reasons, got %#v", d)
 	}
 }
 
-func TestR3RequiresExplicitHumanApproval(t *testing.T) {
+func TestR3RequiresExplicitHumanApprovalProvenance(t *testing.T) {
 	p := baseProposal()
-	p.Risk = domain.RiskR3
-	p.Action.Type = domain.ActionDrainNode
-	p.Rollback = &domain.Rollback{Strategy: "uncordon_node"}
-	p.Authority = domain.AuthorityApproval
-	d := NewGuard().Evaluate(p)
-	if d.Allowed || !contains(d.Reasons, "explicit human approval") {
-		t.Fatalf("expected approval denial, got %#v", d)
+	p.EstimatedRisk = riskPtr(domain.RiskR3)
+	p.Action = domain.Action{
+		Type:      domain.ActionDrainNode,
+		DrainNode: &domain.DrainNodeAction{Node: "worker-1"},
 	}
+	p.Rollback = &domain.Action{
+		Type:         domain.ActionUncordonNode,
+		UncordonNode: &domain.UncordonNodeAction{Node: "worker-1"},
+	}
+
+	ctx := baseContext()
+	ctx.Authority = domain.AuthorityApproval
+
+	d := NewGuard().Evaluate(p, ctx)
+	if d.Allowed || !contains(d.Reasons, "explicit human approval provenance") {
+		t.Fatalf("expected approval-provenance denial, got %#v", d)
+	}
+}
+
+func TestApprovedR2UsesTrustedContext(t *testing.T) {
+	p := rollbackProposal()
+	d := NewGuard().Evaluate(p, approvedContext())
+	if !d.Allowed {
+		t.Fatalf("expected approved R2 action to pass, got %#v", d)
+	}
+}
+
+func rollbackProposal() domain.Proposal {
+	p := baseProposal()
+	p.EstimatedRisk = riskPtr(domain.RiskR2)
+	p.Action = domain.Action{
+		Type: domain.ActionRollbackDeployment,
+		RollbackDeployment: &domain.RollbackDeploymentAction{
+			Namespace:    "default",
+			Deployment:   "api",
+			FromRevision: 193,
+			ToRevision:   192,
+		},
+	}
+	p.Rollback = &domain.Action{
+		Type: domain.ActionRollbackDeployment,
+		RollbackDeployment: &domain.RollbackDeploymentAction{
+			Namespace:    "default",
+			Deployment:   "api",
+			FromRevision: 192,
+			ToRevision:   193,
+		},
+	}
+	return p
+}
+
+func approvedContext() domain.ExecutionContext {
+	ctx := baseContext()
+	ctx.Authority = domain.AuthorityApproval
+	ctx.HumanApproval = &domain.HumanApproval{
+		ApprovalID: "chg-1234",
+		ApprovedBy: "operator@example.test",
+	}
+	return ctx
 }
 
 func contains(items []string, needle string) bool {

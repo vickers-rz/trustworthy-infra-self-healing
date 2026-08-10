@@ -23,13 +23,13 @@ type Executor interface {
 type MockExecutor struct{}
 
 func (MockExecutor) Execute(_ context.Context, p domain.Proposal, dryRun bool) (Result, error) {
-	if p.Action.Type == "" {
-		return Result{}, fmt.Errorf("missing semantic action type")
+	if err := p.Action.Validate(); err != nil {
+		return Result{}, fmt.Errorf("invalid semantic action: %w", err)
 	}
 	return Result{
 		ProposalID: p.ID,
 		Action:     p.Action.Type,
 		DryRun:     dryRun,
-		Message:    "mock executor accepted a typed semantic action; no infrastructure was mutated",
+		Message:    "mock executor accepted a validated typed semantic action; no infrastructure was mutated",
 	}, nil
 }
