@@ -3,6 +3,7 @@ package domain
 import (
 	"fmt"
 	"strings"
+	"time"
 )
 
 type AuthorityLevel string
@@ -42,6 +43,7 @@ const (
 )
 
 type Hypothesis struct {
+	ID         string  `json:"id"`
 	Type       string  `json:"type"`
 	Confidence float64 `json:"confidence"`
 }
@@ -189,11 +191,16 @@ func (a Action) payloadCount() int {
 	return count
 }
 
+// Proposal is probabilistic/planner output. It references trusted evidence by
+// immutable bundle/item IDs rather than embedding provenance-bearing evidence
+// objects that a model could rewrite.
 type Proposal struct {
-	ID         string        `json:"id"`
-	IncidentID string        `json:"incident_id"`
-	Hypothesis Hypothesis    `json:"hypothesis"`
-	Evidence   []EvidenceRef `json:"evidence"`
+	ID         string     `json:"id"`
+	IncidentID string     `json:"incident_id"`
+	Hypothesis Hypothesis `json:"hypothesis"`
+
+	EvidenceBundleID string   `json:"evidence_bundle_id"`
+	EvidenceIDs      []string `json:"evidence_ids"`
 
 	// EstimatedRisk is advisory model/planner output only. It never grants
 	// authority. The deterministic risk engine computes EffectiveRisk.
@@ -220,6 +227,7 @@ type ExecutionContext struct {
 	PolicyVersion    string         `json:"policy_version"`
 	Environment      string         `json:"environment"`
 	ActorID          string         `json:"actor_id"`
+	DecisionTime     time.Time      `json:"decision_time"`
 }
 
 func (c ExecutionContext) HasHumanApproval() bool {

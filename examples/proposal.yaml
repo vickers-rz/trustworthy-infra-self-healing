@@ -1,11 +1,9 @@
-proposal:
-  id: rem_20260810_001
+# Produced by the trusted Evidence Plane, not by the model/planner.
+evidence_bundle:
+  id: eb_20260810_payment_001
   incident_id: inc_20260810_payment_5xx
-  estimated_risk: R2
-  hypothesis:
-    type: unhealthy_new_deployment
-    confidence: 0.87
-  evidence:
+  created_at: 2026-08-10T04:12:03Z
+  items:
     - id: ev_deploy_193
       kind: change
       uri: k8s://payments/deployment/payment-api/revision/193
@@ -39,6 +37,32 @@ proposal:
       collected_at: 2026-08-10T04:12:01Z
       fresh_until: 2026-08-10T04:15:00Z
       trust: high
+  relations:
+    - evidence_id: ev_deploy_193
+      claim_id: hyp_unhealthy_new_deployment
+      type: supports
+    - evidence_id: ev_error_rate
+      claim_id: hyp_unhealthy_new_deployment
+      type: supports
+    - evidence_id: ev_previous_revision
+      claim_id: hyp_unhealthy_new_deployment
+      type: context_for
+
+# Probabilistic model/planner output. It may reference trusted evidence IDs but
+# cannot rewrite source, collector, trust, timestamps, or freshness metadata.
+proposal:
+  id: rem_20260810_001
+  incident_id: inc_20260810_payment_5xx
+  evidence_bundle_id: eb_20260810_payment_001
+  evidence_ids:
+    - ev_deploy_193
+    - ev_error_rate
+    - ev_previous_revision
+  estimated_risk: R2
+  hypothesis:
+    id: hyp_unhealthy_new_deployment
+    type: unhealthy_new_deployment
+    confidence: 0.87
   action:
     type: rollback_deployment
     rollback_deployment:
@@ -61,14 +85,15 @@ proposal:
     - error_rate_5m < 1%
     - p99_latency < 500ms
 
-# This object comes from trusted runtime/identity/approval systems, not from the
-# model or planner that generated the proposal above.
+# Trusted runtime/identity/approval state. Decision time is explicit so evidence
+# freshness decisions are deterministic and replayable during audit.
 execution_context:
   authority: L5_APPROVAL
   human_approval:
     approval_id: CHG-20260810-0042
     approved_by: sre-operator@example.com
   operator_override: false
-  policy_version: mvp-v2
+  policy_version: mvp-v3
   environment: staging
   actor_id: controlplane:staging
+  decision_time: 2026-08-10T04:13:00Z

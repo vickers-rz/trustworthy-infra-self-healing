@@ -14,14 +14,15 @@ import (
 
 func main() {
 	estimatedRisk := domain.RiskR1
-	observedAt := time.Now().UTC()
-	freshUntil := observedAt.Add(2 * time.Minute)
-	proposal := domain.Proposal{
-		ID:            "rem_demo_001",
-		IncidentID:    "inc_demo_001",
-		EstimatedRisk: &estimatedRisk,
-		Hypothesis:    domain.Hypothesis{Type: "unhealthy_workload", Confidence: 0.91},
-		Evidence: []domain.EvidenceRef{
+	decisionTime := time.Now().UTC()
+	observedAt := decisionTime.Add(-30 * time.Second)
+	freshUntil := decisionTime.Add(90 * time.Second)
+
+	bundle := domain.EvidenceBundle{
+		ID:         "bundle_demo_001",
+		IncidentID: "inc_demo_001",
+		CreatedAt:  observedAt.Add(time.Second),
+		Items: []domain.EvidenceRef{
 			{
 				ID:          "ev_demo_health",
 				Kind:        domain.EvidenceMetric,
@@ -36,6 +37,18 @@ func main() {
 				Trust:       domain.EvidenceTrustHigh,
 			},
 		},
+		Relations: []domain.EvidenceRelation{
+			{EvidenceID: "ev_demo_health", ClaimID: "hyp_demo_unhealthy", Type: domain.EvidenceSupports},
+		},
+	}
+
+	proposal := domain.Proposal{
+		ID:               "rem_demo_001",
+		IncidentID:       "inc_demo_001",
+		EstimatedRisk:    &estimatedRisk,
+		Hypothesis:       domain.Hypothesis{ID: "hyp_demo_unhealthy", Type: "unhealthy_workload", Confidence: 0.91},
+		EvidenceBundleID: bundle.ID,
+		EvidenceIDs:      []string{"ev_demo_health"},
 		Action: domain.Action{
 			Type: domain.ActionRestartWorkload,
 			RestartWorkload: &domain.RestartWorkloadAction{
@@ -49,13 +62,14 @@ func main() {
 
 	trustedContext := domain.ExecutionContext{
 		Authority:     domain.AuthorityDelegated,
-		PolicyVersion: "mvp-v2",
+		PolicyVersion: "mvp-v3",
 		Environment:   "staging",
 		ActorID:       "controlplane:demo",
+		DecisionTime:  decisionTime,
 	}
 
 	guard := policy.NewGuard()
-	decision := guard.Evaluate(proposal, trustedContext)
+	decision := guard.Evaluate(proposal, trustedContext, bundle)
 	encoded, _ := json.MarshalIndent(decision, "", "  ")
 	fmt.Println(string(encoded))
 	if !decision.Allowed {

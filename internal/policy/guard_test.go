@@ -10,13 +10,16 @@ import (
 
 func riskPtr(r domain.RiskClass) *domain.RiskClass { return &r }
 
+var testObservedAt = time.Date(2026, 8, 10, 5, 0, 0, 0, time.UTC)
+
 func baseProposal() domain.Proposal {
 	return domain.Proposal{
-		ID:            "rem_test",
-		IncidentID:    "inc_test",
-		Hypothesis:    domain.Hypothesis{Type: "unhealthy_workload", Confidence: 0.9},
-		Evidence:      []domain.EvidenceRef{validPolicyEvidence()},
-		EstimatedRisk: riskPtr(domain.RiskR1),
+		ID:               "rem_test",
+		IncidentID:       "inc_test",
+		Hypothesis:       domain.Hypothesis{ID: "hyp_unhealthy", Type: "unhealthy_workload", Confidence: 0.9},
+		EvidenceBundleID: "bundle_test",
+		EvidenceIDs:      []string{"ev-policy-test"},
+		EstimatedRisk:    riskPtr(domain.RiskR1),
 		Action: domain.Action{
 			Type: domain.ActionRestartWorkload,
 			RestartWorkload: &domain.RestartWorkloadAction{
@@ -32,35 +35,106 @@ func baseProposal() domain.Proposal {
 func baseContext() domain.ExecutionContext {
 	return domain.ExecutionContext{
 		Authority:     domain.AuthorityDelegated,
-		PolicyVersion: "test-v2",
+		PolicyVersion: "test-v3",
 		Environment:   "staging",
 		ActorID:       "controlplane:test",
+		DecisionTime:  testObservedAt.Add(2 * time.Minute),
 	}
 }
 
-func TestAllowsLowRiskDelegatedSemanticAction(t *testing.T) {
-	d := NewGuard().Evaluate(baseProposal(), baseContext())
+func baseBundle() domain.EvidenceBundle {
+	return domain.EvidenceBundle{
+		ID:         "bundle_test",
+		IncidentID: "inc_test",
+		CreatedAt:  testObservedAt.Add(10 * time.Second),
+		Items:      []domain.EvidenceRef{validPolicyEvidence()},
+		Relations: []domain.EvidenceRelation{
+			{EvidenceID: "ev-policy-test", ClaimID: "hyp_unhealthy", Type: domain.EvidenceSupports},
+		},
+	}
+}
+
+func TestAllowsLowRiskDelegatedSemanticActionWithTrustedEvidence(t *testing.T) {
+	d := NewGuard().Evaluate(baseProposal(), baseContext(), baseBundle())
 	if !d.Allowed {
 		t.Fatalf("expected allow, got %#v", d)
 	}
 	if d.EffectiveRisk != domain.RiskR1 {
 		t.Fatalf("expected R1 effective risk, got %s", d.EffectiveRisk)
 	}
+	if !contains(d.Reasons, "fresh operational") {
+		t.Fatalf("expected freshness reasoning, got %#v", d.Reasons)
+	}
 }
 
-func TestInvalidEvidenceProvenanceFailsClosed(t *testing.T) {
+func TestInvalidTrustedEvidenceBundleFailsClosed(t *testing.T) {
+	bundle := baseBundle()
+	bundle.Items[0].Collector = ""
+	d := NewGuard().Evaluate(baseProposal(), baseContext(), bundle)
+	if d.Allowed || !contains(d.Reasons, "trusted evidence bundle is invalid") || !contains(d.Reasons, "collector provenance") {
+		t.Fatalf("expected bundle provenance denial, got %#v", d)
+	}
+}
+
+func TestProposalCannotSubstituteAnotherEvidenceBundle(t *testing.T) {
 	p := baseProposal()
-	p.Evidence[0].Collector = ""
-	d := NewGuard().Evaluate(p, baseContext())
-	if d.Allowed || !contains(d.Reasons, "evidence[0] provenance is invalid") || !contains(d.Reasons, "collector provenance") {
-		t.Fatalf("expected evidence provenance denial, got %#v", d)
+	p.EvidenceBundleID = "model-invented-bundle"
+	d := NewGuard().Evaluate(p, baseContext(), baseBundle())
+	if d.Allowed || !contains(d.Reasons, "does not match trusted bundle") {
+		t.Fatalf("expected evidence bundle mismatch denial, got %#v", d)
+	}
+}
+
+func TestProposalCannotReferenceUnknownEvidenceID(t *testing.T) {
+	p := baseProposal()
+	p.EvidenceIDs = []string{"ev-does-not-exist"}
+	d := NewGuard().Evaluate(p, baseContext(), baseBundle())
+	if d.Allowed || !contains(d.Reasons, "unknown evidence id") {
+		t.Fatalf("expected unknown evidence reference denial, got %#v", d)
+	}
+}
+
+func TestStaleOperationalEvidenceFailsClosed(t *testing.T) {
+	ctx := baseContext()
+	ctx.DecisionTime = testObservedAt.Add(10 * time.Minute)
+	d := NewGuard().Evaluate(baseProposal(), ctx, baseBundle())
+	if d.Allowed || !contains(d.Reasons, "stale at decision time") {
+		t.Fatalf("expected stale evidence denial, got %#v", d)
+	}
+}
+
+func TestUnknownOperationalFreshnessFailsClosed(t *testing.T) {
+	bundle := baseBundle()
+	bundle.Items[0].FreshUntil = nil
+	d := NewGuard().Evaluate(baseProposal(), baseContext(), bundle)
+	if d.Allowed || !contains(d.Reasons, "unknown freshness") {
+		t.Fatalf("expected unknown freshness denial, got %#v", d)
+	}
+}
+
+func TestReferenceDocumentsCannotAloneAuthorizeMutation(t *testing.T) {
+	bundle := baseBundle()
+	bundle.Items[0].Kind = domain.EvidenceRunbook
+	bundle.Items[0].FreshUntil = nil
+	d := NewGuard().Evaluate(baseProposal(), baseContext(), bundle)
+	if d.Allowed || !contains(d.Reasons, "requires at least one fresh operational evidence") {
+		t.Fatalf("expected runbook-only denial, got %#v", d)
+	}
+}
+
+func TestDecisionTimeIsRequiredAndReplayExplicit(t *testing.T) {
+	ctx := baseContext()
+	ctx.DecisionTime = time.Time{}
+	d := NewGuard().Evaluate(baseProposal(), ctx, baseBundle())
+	if d.Allowed || !contains(d.Reasons, "requires decision time") {
+		t.Fatalf("expected decision-time denial, got %#v", d)
 	}
 }
 
 func TestOperatorOverrideAlwaysWins(t *testing.T) {
 	ctx := baseContext()
 	ctx.OperatorOverride = true
-	d := NewGuard().Evaluate(baseProposal(), ctx)
+	d := NewGuard().Evaluate(baseProposal(), ctx, baseBundle())
 	if d.Allowed || !contains(d.Reasons, "operator override") {
 		t.Fatalf("expected override denial, got %#v", d)
 	}
@@ -69,7 +143,7 @@ func TestOperatorOverrideAlwaysWins(t *testing.T) {
 func TestUnknownActionFailsClosed(t *testing.T) {
 	p := baseProposal()
 	p.Action.Type = domain.ActionType("run_shell")
-	d := NewGuard().Evaluate(p, baseContext())
+	d := NewGuard().Evaluate(p, baseContext(), baseBundle())
 	if d.Allowed || !contains(d.Reasons, "risk classification failed") {
 		t.Fatalf("expected classification denial, got %#v", d)
 	}
@@ -78,9 +152,7 @@ func TestUnknownActionFailsClosed(t *testing.T) {
 func TestUnderreportedRiskFailsClosed(t *testing.T) {
 	p := rollbackProposal()
 	p.EstimatedRisk = riskPtr(domain.RiskR1)
-	ctx := approvedContext()
-
-	d := NewGuard().Evaluate(p, ctx)
+	d := NewGuard().Evaluate(p, approvedContext(), baseBundle())
 	if d.Allowed || !contains(d.Reasons, "under-reports deterministic effective risk") {
 		t.Fatalf("expected risk under-reporting denial, got %#v", d)
 	}
@@ -92,9 +164,7 @@ func TestUnderreportedRiskFailsClosed(t *testing.T) {
 func TestR2NeedsRollbackAndIsNotDelegatedInMVP(t *testing.T) {
 	p := rollbackProposal()
 	p.Rollback = nil
-	ctx := baseContext()
-
-	d := NewGuard().Evaluate(p, ctx)
+	d := NewGuard().Evaluate(p, baseContext(), baseBundle())
 	if d.Allowed {
 		t.Fatalf("expected R2 denial, got %#v", d)
 	}
@@ -118,15 +188,15 @@ func TestR3RequiresExplicitHumanApprovalProvenance(t *testing.T) {
 	ctx := baseContext()
 	ctx.Authority = domain.AuthorityApproval
 
-	d := NewGuard().Evaluate(p, ctx)
+	d := NewGuard().Evaluate(p, ctx, baseBundle())
 	if d.Allowed || !contains(d.Reasons, "explicit human approval provenance") {
 		t.Fatalf("expected approval-provenance denial, got %#v", d)
 	}
 }
 
-func TestApprovedR2UsesTrustedContext(t *testing.T) {
+func TestApprovedR2UsesTrustedContextAndEvidence(t *testing.T) {
 	p := rollbackProposal()
-	d := NewGuard().Evaluate(p, approvedContext())
+	d := NewGuard().Evaluate(p, approvedContext(), baseBundle())
 	if !d.Allowed {
 		t.Fatalf("expected approved R2 action to pass, got %#v", d)
 	}
@@ -167,8 +237,7 @@ func approvedContext() domain.ExecutionContext {
 }
 
 func validPolicyEvidence() domain.EvidenceRef {
-	observed := time.Date(2026, 8, 10, 5, 0, 0, 0, time.UTC)
-	freshUntil := observed.Add(5 * time.Minute)
+	freshUntil := testObservedAt.Add(5 * time.Minute)
 	return domain.EvidenceRef{
 		ID:          "ev-policy-test",
 		Kind:        domain.EvidenceMetric,
@@ -177,8 +246,8 @@ func validPolicyEvidence() domain.EvidenceRef {
 		Collector:   "policy-test-adapter/v1",
 		Subject:     "k8s://default/deployment/api",
 		Summary:     "health signal degraded",
-		ObservedAt:  observed,
-		CollectedAt: observed.Add(time.Second),
+		ObservedAt:  testObservedAt,
+		CollectedAt: testObservedAt.Add(time.Second),
 		FreshUntil:  &freshUntil,
 		Trust:       domain.EvidenceTrustHigh,
 	}

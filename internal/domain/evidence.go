@@ -179,9 +179,8 @@ type MissingEvidence struct {
 	Reason  string       `json:"reason"`
 }
 
-// EvidenceBundle is a reconstructable incident evidence pack. A bundle may be
-// intentionally incomplete, but missing evidence must then be represented
-// explicitly rather than silently omitted.
+// EvidenceBundle is a reconstructable incident evidence pack supplied to the
+// decision path by the evidence plane, not by the probabilistic proposal.
 type EvidenceBundle struct {
 	ID         string             `json:"id"`
 	IncidentID string             `json:"incident_id"`
@@ -241,6 +240,38 @@ func (b EvidenceBundle) Validate() error {
 		}
 	}
 	return nil
+}
+
+// Resolve returns the exact evidence items referenced by a proposal. Duplicate
+// proposal references and unknown IDs fail closed so a decision record has one
+// unambiguous selected-evidence set.
+func (b EvidenceBundle) Resolve(ids []string) ([]EvidenceRef, error) {
+	if len(ids) == 0 {
+		return nil, fmt.Errorf("at least one evidence id is required")
+	}
+	index := make(map[string]EvidenceRef, len(b.Items))
+	for _, item := range b.Items {
+		index[item.ID] = item
+	}
+
+	seen := make(map[string]struct{}, len(ids))
+	selected := make([]EvidenceRef, 0, len(ids))
+	for i, id := range ids {
+		id = strings.TrimSpace(id)
+		if id == "" {
+			return nil, fmt.Errorf("evidence_ids[%d] is empty", i)
+		}
+		if _, duplicate := seen[id]; duplicate {
+			return nil, fmt.Errorf("duplicate proposal evidence id %q", id)
+		}
+		item, ok := index[id]
+		if !ok {
+			return nil, fmt.Errorf("proposal references unknown evidence id %q", id)
+		}
+		seen[id] = struct{}{}
+		selected = append(selected, item)
+	}
+	return selected, nil
 }
 
 type FreshnessSummary struct {

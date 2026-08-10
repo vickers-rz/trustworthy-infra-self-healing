@@ -1,13 +1,13 @@
 # Remediation Policy
 
-A remediation decision is evaluated as **trusted execution authority × deterministic operational risk**, plus hard invariants.
+A remediation decision is evaluated as **trusted execution authority × deterministic operational risk × trusted evidence sufficiency**, plus hard invariants.
 
 ## Trust boundary
 
 The planner/model may propose:
 
-- a hypothesis;
-- evidence;
+- a hypothesis with a stable claim ID;
+- references to an evidence bundle and item IDs;
 - a typed action;
 - an advisory `estimated_risk`;
 - preconditions;
@@ -16,14 +16,44 @@ The planner/model may propose:
 
 The planner/model may **not** authoritatively provide:
 
+- evidence provenance, collector identity, timestamps, trust, or freshness;
 - execution authority;
 - human approval;
 - operator override state;
 - policy version;
 - authenticated actor identity;
+- trusted decision time;
 - effective operational risk.
 
-Those values come from trusted control-plane context and deterministic classifiers.
+Those values come from the Evidence Plane, trusted control-plane context, and deterministic classifiers/policies.
+
+## Evidence binding
+
+The Guard receives an `EvidenceBundle` independently from the Proposal.
+
+Before authorization it verifies:
+
+- the bundle is structurally valid;
+- `Proposal.evidence_bundle_id` equals the supplied trusted bundle ID;
+- the bundle incident ID equals the Proposal incident ID;
+- every selected `evidence_id` exists inside the trusted bundle;
+- selected evidence IDs are nonempty and unique.
+
+A model therefore cannot gain authority by embedding a fabricated evidence object in its Proposal.
+
+## Evidence freshness
+
+`ExecutionContext.decision_time` is explicit trusted runtime state. Freshness is evaluated against that timestamp so authorization can be replayed deterministically.
+
+For mutable remediation:
+
+- operational evidence must have known freshness and be fresh at decision time;
+- stale operational evidence denies authorization;
+- freshness-unknown operational evidence denies authorization;
+- reference evidence (`runbook`, historical `incident`) may accompany a decision but cannot alone establish current state;
+- at least one selected fresh operational evidence item is required.
+
+The current policy does not yet use source `trust` as a numeric or authorization weight. Source trust will later be assigned/verified by a trusted registry rather than by the planner.
 
 ## Authority
 
@@ -59,9 +89,9 @@ If `estimated_risk < effective_risk`, the MVP fails closed. A model cannot gain 
 | Effective risk | L4 delegated | L5 + explicit approval |
 |---|---:|---:|
 | R0 | allow | allow |
-| R1 | allow if all invariants pass | allow with approval provenance |
-| R2 | deny (MVP) | allow if typed rollback + verification pass |
-| R3 | deny | allow only for catalogued actions with typed rollback |
+| R1 | allow if evidence + all invariants pass | allow with approval provenance |
+| R2 | deny (MVP) | allow if evidence + typed rollback + verification pass |
+| R3 | deny | allow only for catalogued actions with fresh evidence + typed rollback |
 | R4 | deny | deny (MVP) |
 | R5 | deny | deny |
 
@@ -108,7 +138,10 @@ A boolean inside a model-generated proposal is never sufficient evidence of appr
 
 Every decision should eventually persist:
 
-- proposal/incident IDs;
+- proposal/incident/hypothesis IDs;
+- EvidenceBundle ID/hash and selected evidence IDs;
+- trusted decision time;
+- per-item freshness state at decision time;
 - deterministic effective risk and classifier version;
 - planner estimated risk and any disagreement;
 - policy version/hash;
@@ -116,7 +149,6 @@ Every decision should eventually persist:
 - authority;
 - risk/blast radius;
 - matched rules;
-- evidence;
 - approval provenance;
 - operator override state;
 - precondition results;
