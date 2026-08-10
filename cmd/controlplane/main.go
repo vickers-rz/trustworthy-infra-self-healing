@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"time"
 
 	"github.com/vickers-rz/trustworthy-infra-self-healing/internal/domain"
 	"github.com/vickers-rz/trustworthy-infra-self-healing/internal/executor"
@@ -13,13 +14,27 @@ import (
 
 func main() {
 	estimatedRisk := domain.RiskR1
+	observedAt := time.Now().UTC()
+	freshUntil := observedAt.Add(2 * time.Minute)
 	proposal := domain.Proposal{
 		ID:            "rem_demo_001",
 		IncidentID:    "inc_demo_001",
 		EstimatedRisk: &estimatedRisk,
 		Hypothesis:    domain.Hypothesis{Type: "unhealthy_workload", Confidence: 0.91},
 		Evidence: []domain.EvidenceRef{
-			{URI: "metric://prometheus/demo", Summary: "health signal degraded"},
+			{
+				ID:          "ev_demo_health",
+				Kind:        domain.EvidenceMetric,
+				URI:         "prometheus://demo-api/health",
+				Source:      "prometheus",
+				Collector:   "infraheal-demo-adapter/v1",
+				Subject:     "k8s://default/deployment/demo-api",
+				Summary:     "health signal degraded",
+				ObservedAt:  observedAt,
+				CollectedAt: observedAt.Add(time.Second),
+				FreshUntil:  &freshUntil,
+				Trust:       domain.EvidenceTrustHigh,
+			},
 		},
 		Action: domain.Action{
 			Type: domain.ActionRestartWorkload,
