@@ -3,6 +3,7 @@ package policy
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/vickers-rz/trustworthy-infra-self-healing/internal/domain"
 )
@@ -14,7 +15,7 @@ func baseProposal() domain.Proposal {
 		ID:            "rem_test",
 		IncidentID:    "inc_test",
 		Hypothesis:    domain.Hypothesis{Type: "unhealthy_workload", Confidence: 0.9},
-		Evidence:      []domain.EvidenceRef{{URI: "metric://test", Summary: "degraded"}},
+		Evidence:      []domain.EvidenceRef{validPolicyEvidence()},
 		EstimatedRisk: riskPtr(domain.RiskR1),
 		Action: domain.Action{
 			Type: domain.ActionRestartWorkload,
@@ -44,6 +45,15 @@ func TestAllowsLowRiskDelegatedSemanticAction(t *testing.T) {
 	}
 	if d.EffectiveRisk != domain.RiskR1 {
 		t.Fatalf("expected R1 effective risk, got %s", d.EffectiveRisk)
+	}
+}
+
+func TestInvalidEvidenceProvenanceFailsClosed(t *testing.T) {
+	p := baseProposal()
+	p.Evidence[0].Collector = ""
+	d := NewGuard().Evaluate(p, baseContext())
+	if d.Allowed || !contains(d.Reasons, "evidence[0] provenance is invalid") || !contains(d.Reasons, "collector provenance") {
+		t.Fatalf("expected evidence provenance denial, got %#v", d)
 	}
 }
 
@@ -154,6 +164,24 @@ func approvedContext() domain.ExecutionContext {
 		ApprovedBy: "operator@example.test",
 	}
 	return ctx
+}
+
+func validPolicyEvidence() domain.EvidenceRef {
+	observed := time.Date(2026, 8, 10, 5, 0, 0, 0, time.UTC)
+	freshUntil := observed.Add(5 * time.Minute)
+	return domain.EvidenceRef{
+		ID:          "ev-policy-test",
+		Kind:        domain.EvidenceMetric,
+		URI:         "prometheus://test/api-health",
+		Source:      "prometheus",
+		Collector:   "policy-test-adapter/v1",
+		Subject:     "k8s://default/deployment/api",
+		Summary:     "health signal degraded",
+		ObservedAt:  observed,
+		CollectedAt: observed.Add(time.Second),
+		FreshUntil:  &freshUntil,
+		Trust:       domain.EvidenceTrustHigh,
+	}
 }
 
 func contains(items []string, needle string) bool {
