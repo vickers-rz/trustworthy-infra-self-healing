@@ -5,31 +5,21 @@ on:
   pull_request:
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   test:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-        with:
-          ref: ${{ github.head_ref || github.ref_name }}
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
-          cache: false
-      - name: Tidy modules
-        run: go mod tidy
-      - name: Commit module graph when bootstrapping
-        if: github.event_name == 'pull_request'
+          cache: true
+      - name: Verify module graph
         run: |
-          if ! git diff --quiet -- go.mod go.sum; then
-            git config user.name "github-actions[bot]"
-            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-            git add go.mod go.sum
-            git commit -m "build: tidy Kubernetes module graph"
-            git push origin HEAD:${{ github.head_ref }}
-          fi
+          go mod tidy
+          git diff --exit-code -- go.mod go.sum
       - name: Test
         run: go test ./...
       - name: Vet
