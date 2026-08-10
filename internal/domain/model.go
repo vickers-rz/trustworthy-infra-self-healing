@@ -37,6 +37,7 @@ const (
 	ActionRollbackDeployment ActionType = "rollback_deployment"
 	ActionScaleWorkload      ActionType = "scale_workload"
 	ActionDrainNode          ActionType = "drain_node"
+	ActionUncordonNode       ActionType = "uncordon_node"
 	ActionFailoverDatabase   ActionType = "failover_database"
 )
 
@@ -73,6 +74,10 @@ type DrainNodeAction struct {
 	Node string `json:"node"`
 }
 
+type UncordonNodeAction struct {
+	Node string `json:"node"`
+}
+
 type FailoverDatabaseAction struct {
 	Cluster       string `json:"cluster"`
 	TargetReplica string `json:"target_replica"`
@@ -88,6 +93,7 @@ type Action struct {
 	RollbackDeployment *RollbackDeploymentAction `json:"rollback_deployment,omitempty"`
 	ScaleWorkload      *ScaleWorkloadAction      `json:"scale_workload,omitempty"`
 	DrainNode          *DrainNodeAction          `json:"drain_node,omitempty"`
+	UncordonNode       *UncordonNodeAction       `json:"uncordon_node,omitempty"`
 	FailoverDatabase   *FailoverDatabaseAction   `json:"failover_database,omitempty"`
 }
 
@@ -148,6 +154,11 @@ func (a Action) Validate() error {
 			return fmt.Errorf("drain_node payload is required")
 		}
 		return require(a.DrainNode.Node, "drain_node.node")
+	case ActionUncordonNode:
+		if a.UncordonNode == nil {
+			return fmt.Errorf("uncordon_node payload is required")
+		}
+		return require(a.UncordonNode.Node, "uncordon_node.node")
 	case ActionFailoverDatabase:
 		if a.FailoverDatabase == nil {
 			return fmt.Errorf("failover_database payload is required")
@@ -175,6 +186,9 @@ func (a Action) payloadCount() int {
 	if a.DrainNode != nil {
 		count++
 	}
+	if a.UncordonNode != nil {
+		count++
+	}
 	if a.FailoverDatabase != nil {
 		count++
 	}
@@ -182,9 +196,9 @@ func (a Action) payloadCount() int {
 }
 
 type Proposal struct {
-	ID         string     `json:"id"`
-	IncidentID string     `json:"incident_id"`
-	Hypothesis Hypothesis `json:"hypothesis"`
+	ID         string        `json:"id"`
+	IncidentID string        `json:"incident_id"`
+	Hypothesis Hypothesis    `json:"hypothesis"`
 	Evidence   []EvidenceRef `json:"evidence"`
 
 	// EstimatedRisk is advisory model/planner output only. It never grants
@@ -206,12 +220,12 @@ type HumanApproval struct {
 // identity/approval systems and operator controls. It is intentionally not part
 // of model-generated Proposal data.
 type ExecutionContext struct {
-	Authority        AuthorityLevel  `json:"authority"`
-	HumanApproval    *HumanApproval  `json:"human_approval,omitempty"`
-	OperatorOverride bool            `json:"operator_override"`
-	PolicyVersion    string          `json:"policy_version"`
-	Environment      string          `json:"environment"`
-	ActorID          string          `json:"actor_id"`
+	Authority        AuthorityLevel `json:"authority"`
+	HumanApproval    *HumanApproval `json:"human_approval,omitempty"`
+	OperatorOverride bool           `json:"operator_override"`
+	PolicyVersion    string         `json:"policy_version"`
+	Environment      string         `json:"environment"`
+	ActorID          string         `json:"actor_id"`
 }
 
 func (c ExecutionContext) HasHumanApproval() bool {
