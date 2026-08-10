@@ -15,7 +15,16 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
-          cache: true
+          cache: false
+      - name: Tidy modules
+        run: go mod tidy
+      - name: Upload module graph
+        uses: actions/upload-artifact@v4
+        with:
+          name: module-files
+          path: |
+            go.mod
+            go.sum
       - name: Test
         run: go test ./...
       - name: Vet
