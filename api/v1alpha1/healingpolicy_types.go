@@ -47,8 +47,10 @@ type HealingPolicyStatus struct {
 	ReadyReplicas     int32 `json:"readyReplicas,omitempty"`
 	UpdatedReplicas   int32 `json:"updatedReplicas,omitempty"`
 
-	LastObservedTime *metav1.Time       `json:"lastObservedTime,omitempty"`
-	Conditions       []metav1.Condition `json:"conditions,omitempty"`
+	LastObservedTime          *metav1.Time       `json:"lastObservedTime,omitempty"`
+	LastEvidenceID            string             `json:"lastEvidenceID,omitempty"`
+	LastEvidenceDigestSHA256  string             `json:"lastEvidenceDigestSHA256,omitempty"`
+	Conditions                []metav1.Condition `json:"conditions,omitempty"`
 }
 
 // +kubebuilder:object:root=true
