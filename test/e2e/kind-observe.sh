@@ -57,9 +57,35 @@ kubectl apply -f config/samples/infraheal_v1alpha1_healingpolicy.yaml
 wait_jsonpath "healingpolicy/demo-api" "{.status.targetFound}" "true"
 wait_jsonpath "healingpolicy/demo-api" "{.status.desiredReplicas}" "1"
 
-echo "==> proving Deployment events drive a new observation"
+initial_evidence_id="$(kubectl get healingpolicy/demo-api -o jsonpath='{.status.lastEvidenceID}')"
+initial_digest="$(kubectl get healingpolicy/demo-api -o jsonpath='{.status.lastEvidenceDigestSHA256}')"
+if [[ ! "${initial_digest}" =~ ^[0-9a-f]{64}$ ]]; then
+  echo "expected 64-character lowercase SHA-256 digest, got ${initial_digest}" >&2
+  exit 1
+fi
+if [[ "${initial_evidence_id}" != "ev_k8s_${initial_digest}" ]]; then
+  echo "evidence ID is not bound to its digest: id=${initial_evidence_id} digest=${initial_digest}" >&2
+  exit 1
+fi
+
+echo "==> proving Deployment events drive a new evidence-backed observation"
 kubectl scale deployment/demo-api --replicas=2
 wait_jsonpath "healingpolicy/demo-api" "{.status.desiredReplicas}" "2"
+
+updated_evidence_id="$(kubectl get healingpolicy/demo-api -o jsonpath='{.status.lastEvidenceID}')"
+updated_digest="$(kubectl get healingpolicy/demo-api -o jsonpath='{.status.lastEvidenceDigestSHA256}')"
+if [[ ! "${updated_digest}" =~ ^[0-9a-f]{64}$ ]]; then
+  echo "updated evidence digest is invalid: ${updated_digest}" >&2
+  exit 1
+fi
+if [[ "${updated_evidence_id}" != "ev_k8s_${updated_digest}" ]]; then
+  echo "updated evidence ID is not bound to its digest" >&2
+  exit 1
+fi
+if [[ "${updated_evidence_id}" == "${initial_evidence_id}" ]]; then
+  echo "Deployment state changed but evidence identity did not" >&2
+  exit 1
+fi
 
 if kubectl --as="${controller_identity}" patch deployment/demo-api --type merge -p '{"spec":{"replicas":3}}'; then
   echo "restricted controller identity was able to mutate the target Deployment" >&2
@@ -72,5 +98,5 @@ if [[ "${actual_replicas}" != "2" ]]; then
   exit 1
 fi
 
-echo "==> observe-only Kind test passed"
+echo "==> observe-only Kind evidence test passed"
 kubectl get healingpolicy/demo-api -o yaml

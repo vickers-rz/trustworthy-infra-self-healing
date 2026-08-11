@@ -154,6 +154,10 @@ spec:
               desiredReplicas:
                 format: int32
                 type: integer
+              lastEvidenceDigestSHA256:
+                type: string
+              lastEvidenceID:
+                type: string
               lastObservedTime:
                 format: date-time
                 type: string

@@ -19,6 +19,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
 
 	infrahealv1alpha1 "github.com/vickers-rz/trustworthy-infra-self-healing/api/v1alpha1"
+	infraevidence "github.com/vickers-rz/trustworthy-infra-self-healing/internal/evidence"
 )
 
 const (
@@ -59,6 +60,9 @@ func (r *HealingPolicyReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	err := r.Get(ctx, types.NamespacedName{Namespace: targetNamespace, Name: policy.Spec.Target.Name}, &deployment)
 	if apierrors.IsNotFound(err) {
 		status := r.missingTargetStatus(&policy, targetNamespace)
+		if evidenceErr := r.attachEvidenceIdentity(&policy, &status); evidenceErr != nil {
+			return ctrl.Result{}, evidenceErr
+		}
 		if updateErr := r.updateStatus(ctx, &policy, status); updateErr != nil {
 			return ctrl.Result{}, updateErr
 		}
@@ -69,6 +73,9 @@ func (r *HealingPolicyReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	}
 
 	status := r.observedDeploymentStatus(&policy, &deployment)
+	if err := r.attachEvidenceIdentity(&policy, &status); err != nil {
+		return ctrl.Result{}, err
+	}
 	if err := r.updateStatus(ctx, &policy, status); err != nil {
 		return ctrl.Result{}, err
 	}
@@ -140,7 +147,7 @@ func (r *HealingPolicyReconciler) missingTargetStatus(policy *infrahealv1alpha1.
 		ObservedGeneration: policy.Generation,
 		TargetFound:        false,
 		LastObservedTime:   &now,
-		Conditions:        append([]metav1.Condition(nil), policy.Status.Conditions...),
+		Conditions:         append([]metav1.Condition(nil), policy.Status.Conditions...),
 	}
 	setCondition(&status.Conditions,
 		infrahealv1alpha1.ConditionTargetResolved,
@@ -167,6 +174,19 @@ func (r *HealingPolicyReconciler) missingTargetStatus(policy *infrahealv1alpha1.
 		now,
 	)
 	return status
+}
+
+func (r *HealingPolicyReconciler) attachEvidenceIdentity(policy *infrahealv1alpha1.HealingPolicy, status *infrahealv1alpha1.HealingPolicyStatus) error {
+	if status == nil || status.LastObservedTime == nil {
+		return fmt.Errorf("cannot build Kubernetes evidence without observation time")
+	}
+	item, err := infraevidence.BuildHealingPolicyStatusEvidence(policy, *status, status.LastObservedTime.Time)
+	if err != nil {
+		return fmt.Errorf("build HealingPolicy evidence: %w", err)
+	}
+	status.LastEvidenceID = item.ID
+	status.LastEvidenceDigestSHA256 = item.DigestSHA256
+	return nil
 }
 
 func (r *HealingPolicyReconciler) updateStatus(ctx context.Context, policy *infrahealv1alpha1.HealingPolicy, next infrahealv1alpha1.HealingPolicyStatus) error {
