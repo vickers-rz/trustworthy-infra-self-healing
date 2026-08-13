@@ -10,6 +10,8 @@ OBSERVE → BUILD EVIDENCE → DIAGNOSE → PROPOSE → CLASSIFY RISK → AUTHOR
 
 The architecture intentionally separates components that **form beliefs** from components that **hold authority**, and now also separates **evidence authority** from proposal generation.
 
+A second architectural axis is equally important: the system reasons about **failure domains and propagation paths**, not only individual resources. Remediation is therefore treated as a reliability decision problem: contain impact, preserve recoverability, minimize blast radius, and only then mutate state when policy allows it.
+
 ## Three-input authorization model
 
 Authorization consumes three independently sourced objects.
@@ -73,7 +75,7 @@ EvidenceBundle ──────────┘          ▼
 
 ## Evidence layer
 
-Inputs may include metrics, logs, traces, Kubernetes events, cloud control-plane events, Git history, deployment revisions, runbooks, postmortems, dependency topology, and operator annotations.
+Inputs may include metrics, logs, traces, Kubernetes events, cloud control-plane events, Git history, deployment revisions, runbooks, postmortems, dependency topology, replication state, failover state, and operator annotations.
 
 The Evidence Plane normalizes these sources into `EvidenceBundle` objects before diagnosis/authorization. RAG may retrieve from evidence/knowledge sources, but retrieval does not make retrieved text authoritative.
 
@@ -81,7 +83,7 @@ The Evidence Plane normalizes these sources into `EvidenceBundle` objects before
 
 The first deterministic freshness policy distinguishes operational evidence from reference evidence.
 
-Operational evidence includes metrics, logs, traces, Kubernetes state/events, changes, topology, and operator annotations. If selected for mutable remediation, operational evidence must have known freshness and still be fresh at trusted decision time.
+Operational evidence includes metrics, logs, traces, Kubernetes state/events, changes, topology, replication/failover state, and operator annotations. If selected for mutable remediation, operational evidence must have known freshness and still be fresh at trusted decision time.
 
 Runbooks and historical incidents may provide context with unknown freshness, but cannot alone establish current operational state. Mutable remediation requires at least one selected fresh operational evidence item.
 
@@ -91,19 +93,66 @@ Rules, statistical detectors, classical ML, and LLMs may jointly produce hypothe
 
 A diagnosis can reference trusted evidence IDs; it cannot rewrite the evidence object's provenance.
 
+Diagnosis should also be able to express **propagation hypotheses**: where an incident originated, which dependency or replication path may carry it further, and which failure domains are already affected or still clean.
+
 ## Proposal layer
 
 A planner converts a hypothesis into a typed `Proposal`. The proposal describes semantic action, advisory estimated risk, preconditions, rollback, verification criteria, and evidence IDs.
 
 Arbitrary shell and inline trusted-evidence metadata are not part of the proposal schema.
 
+A proposal may recommend containment before repair. Examples include isolating a dependency edge, stopping a rollout, freezing a risky propagation path, preserving a recoverable state, or escalating to a human-controlled failover workflow. These remain typed intents; they do not gain execution authority merely because the model recommends them.
+
 ## Deterministic risk classifier
 
-The risk classifier derives **effective operational risk** from trusted semantic action rules and, in future phases, blast radius, environment, service criticality, statefulness, dependency topology, and other control-plane facts.
+The risk classifier derives **effective operational risk** from trusted semantic action rules and, in future phases, blast radius, environment, service criticality, statefulness, dependency topology, failure-domain boundaries, propagation direction, and other control-plane facts.
 
 A proposal may estimate its own risk, but that value is advisory only.
 
 If a proposal reports a lower risk than the deterministic classifier derives, the MVP fails closed. This turns risk disagreement into an auditable safety signal rather than a privilege-escalation path.
+
+## Failure-domain and propagation model
+
+The control plane should represent reliability boundaries explicitly rather than inferring them only from resource names.
+
+Examples of failure domains include:
+
+- process / pod / workload;
+- node / rack / availability zone;
+- service / database cluster;
+- region / data-center site;
+- business subsystem or platform boundary.
+
+Propagation edges describe how faults or unsafe state can cross those domains: deployment rollout, dependency calls, message flows, configuration distribution, replication, failover, or operator-driven change.
+
+This model enables deterministic questions such as:
+
+- What is the smallest affected failure domain?
+- Which unaffected domains are at risk of receiving the same bad state?
+- Can propagation be safely contained before attempting repair?
+- What recoverable state or clean boundary should be preserved?
+- Does the proposed action reduce or expand blast radius?
+
+AI may rank propagation hypotheses and propose containment. The trusted control plane decides whether a containment or repair action is permitted.
+
+## Reliability decision model
+
+The project is intentionally broader than incident auto-remediation. The decision target is:
+
+> Given uncertain evidence and a bounded authority model, what is the safest next action for system reliability?
+
+The valid answer may be:
+
+- observe and gather more evidence;
+- abstain because evidence is stale or contradictory;
+- contain propagation;
+- preserve recoverability;
+- prepare a rollback or failover plan;
+- execute a pre-authorized low-risk action;
+- request explicit human approval;
+- deny the action entirely.
+
+This makes **inaction, containment, and escalation first-class outcomes**, rather than treating every incident as something an AI should automatically "fix".
 
 ## Remediation Guard
 
@@ -119,7 +168,8 @@ The guard is deterministic and fail-closed. It evaluates:
 - trusted execution authority;
 - deterministic effective risk;
 - proposal/effective-risk disagreement;
-- blast radius (future implementation);
+- blast radius and failure-domain scope;
+- propagation impact;
 - human/operator override;
 - preconditions;
 - rollback requirement;
@@ -142,6 +192,8 @@ Initial types include:
 - `uncordon_node`;
 - `failover_database`.
 
+Future containment-oriented action families may include rollout pause, dependency isolation, propagation freeze, or recovery-point preservation, but only after their preconditions, rollback semantics, blast-radius rules, and authorization requirements are deterministic and testable.
+
 Each action owns a typed payload and validation rules. Rollback/compensation is itself represented as a typed action.
 
 ## Kubernetes observation substrate
@@ -162,13 +214,15 @@ A future mutation-capable executor should additionally require a cryptographical
 
 The watchdog owns deadlines, abort signals, and safety invariants. A future production design should deploy it in a distinct failure domain from the planner/controller so LLM outage, RAG failure, controller crash, or network partition cannot remove the escape path.
 
+The watchdog should also be able to detect when an executing action expands rather than reduces blast radius and trigger abort/rollback according to deterministic policy.
+
 ## Verification
 
-Verification uses externally observable postconditions: SLOs, readiness, error rate, latency, saturation, dependency health, and application-specific invariants. The proposing model does not self-certify success.
+Verification uses externally observable postconditions: SLOs, readiness, error rate, latency, saturation, dependency health, propagation state, blast-radius change, and application-specific invariants. The proposing model does not self-certify success.
 
 ## Learning
 
-Outcomes may update incident similarity, remediation ranking, confidence calibration, and hypothesis priors. They may not directly rewrite hard policy, evidence provenance, source trust, or execution authority. Policy evolution is an explicit reviewed artifact, ideally GitOps-managed.
+Outcomes may update incident similarity, remediation ranking, confidence calibration, propagation hypotheses, and hypothesis priors. They may not directly rewrite hard policy, evidence provenance, source trust, or execution authority. Policy evolution is an explicit reviewed artifact, ideally GitOps-managed.
 
 ## Package boundaries
 
@@ -181,4 +235,4 @@ internal/executor    semantic action boundary
 internal/controller  observe-only Kubernetes reconciliation
 ```
 
-Future packages will add trusted evidence adapters, source registry, diagnosis, audit, watchdog, simulation, verification, and provider integrations.
+Future packages will add trusted evidence adapters, topology/failure-domain models, source registry, diagnosis, audit, watchdog, simulation, verification, and provider integrations.
